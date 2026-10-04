@@ -21,8 +21,10 @@ fact-checked. **Target: < 5 s from a claim being spoken to its verdict on screen
   whoever is speaking around it; a new speaker's first words go to a known voice until they have
   spoken 2.5 s; overlapping speech gives fragments and sometimes loses words; sentences at a
   speaker change can take 5–7 s.
-- **Not yet tested: a long run (10+ minutes)** — fingerprint drift, audience noise, keeping up at
-  ~3x the speech-to-text work. Do one before relying on it.
+- Long run ✅ 18 minutes from the start of the same debate (session-912c6eb1, 2026-10-04): three
+  speakers (Holt, Clinton, Trump) with the same labels throughout, none added by audience noise;
+  262 sentences; fast replay 2.1x realtime. Errors were only the known limits above (Trump's first
+  three fragments, "Mr. Trump.", crosstalk). Latency over the full 18 minutes has not been measured.
 - Next: Milestone 3 (classification), 4 (fact-checking), 5 (on-page overlay). See bottom.
 
 ## Layout
