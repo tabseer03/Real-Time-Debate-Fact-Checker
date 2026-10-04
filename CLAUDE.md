@@ -24,7 +24,12 @@ fact-checked. **Target: < 5 s from a claim being spoken to its verdict on screen
 - Long run ✅ 18 minutes from the start of the same debate (session-912c6eb1, 2026-10-04): three
   speakers (Holt, Clinton, Trump) with the same labels throughout, none added by audience noise;
   262 sentences; fast replay 2.1x realtime. Errors were only the known limits above (Trump's first
-  three fragments, "Mr. Trump.", crosstalk). Latency over the full 18 minutes has not been measured.
+  three fragments, "Mr. Trump.", crosstalk). Latency does not drift: median 1.8–2.1 s in every
+  3-minute window. But 25 of 262 sentences (about 10%) took over 5 s, worst 8.3 s — more than the
+  short clips showed.
+- **Open: the latency tail.** Mostly speaker changes and crosstalk, but some slow sentences sit
+  inside one speaker's turn ("We also have to make the economy fairer." 7.2 s, "She's been doing
+  this for 30 years." 7.3 s) and the cause of those has not been looked at. Start there.
 - Next: Milestone 3 (classification), 4 (fact-checking), 5 (on-page overlay). See bottom.
 
 ## Layout
@@ -74,7 +79,11 @@ differ, because the threshold decides where early cuts happen. Sentences from di
 can print slightly out of order (separate worker threads).
 **Latency baseline** (`--realtime`, ms from the end of a sentence's audio): session-17b162f1
 median 1870 / p90 4315 / max 5725, 2 of 41 over 5 s (before early cuts: median 3209, max 6012,
-9 of 35 over 5 s); session-23e612c9 median 1754 / p90 3568 / max 5846, 1 of 47 over 5 s. The eval audio was regenerated with sherpa-onnx 1.13.8 (pip), on which
+9 of 35 over 5 s); session-23e612c9 median 1754 / p90 3568 / max 5846, 1 of 47 over 5 s;
+session-912c6eb1 (18 min) median 1921 / p90 4691 / max 8287, 25 of 262 over 5 s — by 3-minute
+window the medians are 2036, 1866, 1834, 1875, 1903, 2113 and the counts over 5 s are 5, 0, 3, 4,
+6, 7. Measure with the machine otherwise idle.
+The eval audio was regenerated with sherpa-onnx 1.13.8 (pip), on which
 committed v2.2 also gave "Secretary, your response." to the wrong speaker. Re-run both after any change to
 segmentation or speaker logic and compare against this.
 
