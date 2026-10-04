@@ -1,0 +1,10 @@
+# large local model files — fetched by download-models.ps1
+models/
+eval/voices/
+# per-session audio recordings
+recordings/
+eval/*.wav
+# build output / IDE
+backend/target/
+.idea/
+*.iml

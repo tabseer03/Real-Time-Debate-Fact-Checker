@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Debate Fact Checker",
+  "version": "0.1.0",
+  "description": "Real-time fact-checking for YouTube debates (milestone 1: audio capture).",
+  "permissions": ["tabCapture", "offscreen", "activeTab"],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Start / stop fact-checking this tab"
+  }
+}
