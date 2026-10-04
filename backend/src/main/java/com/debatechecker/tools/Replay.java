@@ -50,7 +50,14 @@ public final class Replay {
                 ByteBuffer chunk = pcm.slice(pcm.position(), n);
                 pipeline.feed(chunk);
                 pcm.position(pcm.position() + n);
-                if (realtime) Thread.sleep(n / 32); // 3200 bytes = 100 ms, paced like the live extension
+                if (realtime) {
+                    // 3200 bytes = 100 ms, paced like the live extension. Sleep until this audio is
+                    // due, not for 100 ms each time: Windows oversleeps by several ms per call,
+                    // which fed audio at 0.9x and showed up as latency growing by 15 s over 150 s.
+                    long dueNanos = start + pcm.position() * 1_000_000_000L / 32000;
+                    long waitMs = (dueNanos - System.nanoTime()) / 1_000_000;
+                    if (waitMs > 0) Thread.sleep(waitMs);
+                }
             }
         }
         double audioSec = pcm.capacity() / 32000.0;

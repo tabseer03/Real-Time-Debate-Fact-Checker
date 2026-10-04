@@ -13,10 +13,16 @@ fact-checked. **Target: < 5 s from a claim being spoken to its verdict on screen
 
 ## Status
 - Milestone 1 ✅ tab audio → backend (16 kHz mono PCM, 100 ms chunks, ~1.00x realtime).
-- Milestone 2 ✅ (v2.2) speaker-labelled sentences from free local models. Verified on two synthetic
-  debates (`eval/`). Live run on the real 2016 Trump–Clinton debate
-  (https://www.youtube.com/watch?v=s7gDXtRS0jo) with v2.1 got long turns right but short turns created
-  bogus speakers; v2.2 fixes that but **has not yet been confirmed live** — do that first.
+- Milestone 2 ✅ speaker-labelled sentences from free local models. Verified on two synthetic
+  debates (`eval/`) and confirmed live on the real 2016 Trump–Clinton debate
+  (https://www.youtube.com/watch?v=s7gDXtRS0jo), three clips of 1–3 minutes (2026-10-04): no bogus
+  speakers, every long sentence on the right speaker, median latency 1.9–2.7 s.
+- Known limits, all at interruptions and crosstalk: a line under ~1 s ("No.", "Mr. Trump.") goes to
+  whoever is speaking around it; a new speaker's first words go to a known voice until they have
+  spoken 2.5 s; overlapping speech gives fragments and sometimes loses words; sentences at a
+  speaker change can take 5–7 s.
+- **Not yet tested: a long run (10+ minutes)** — fingerprint drift, audience noise, keeping up at
+  ~3x the speech-to-text work. Do one before relying on it.
 - Next: Milestone 3 (classification), 4 (fact-checking), 5 (on-page overlay). See bottom.
 
 ## Layout
@@ -58,8 +64,16 @@ Run everything from the `debate-checker` folder (relative `models/` and `recordi
 Needs `pip install sherpa-onnx numpy scipy` and Piper voices in `eval/voices/`
 (vits-piper-en_US-ryan-medium, en_US-amy-medium, en_GB-alan-medium from the sherpa-onnx `tts-models`
 release). Run from the project root, then Replay `eval/debate.wav` / `eval/debate2.wav`.
-**v2.2 baseline:** debate = every sentence correct; debate2 = all correct except one 0.6 s "Yes."
-(too short to fingerprint). Same result for thresholds 0.35–0.55. Re-run both after any change to
+**Baseline (with early sentence cuts):** debate = every sentence correct; debate2 = all correct
+except the 0.6 s "Yes." (it now opens a segment, so it can't be split off) and a missing "Good."
+(the speech model drops it). Same for thresholds 0.35, 0.45, 0.55 on both. On the two live
+recordings the speakers are stable across thresholds but wording and a few crosstalk fragments
+differ, because the threshold decides where early cuts happen. Sentences from different speakers
+can print slightly out of order (separate worker threads).
+**Latency baseline** (`--realtime`, ms from the end of a sentence's audio): session-17b162f1
+median 1870 / p90 4315 / max 5725, 2 of 41 over 5 s (before early cuts: median 3209, max 6012,
+9 of 35 over 5 s); session-23e612c9 median 1754 / p90 3568 / max 5846, 1 of 47 over 5 s. The eval audio was regenerated with sherpa-onnx 1.13.8 (pip), on which
+committed v2.2 also gave "Secretary, your response." to the wrong speaker. Re-run both after any change to
 segmentation or speaker logic and compare against this.
 
 ## Decisions and why (don't undo without re-testing)
@@ -71,6 +85,21 @@ segmentation or speaker logic and compare against this.
 - **Speaker-change detection inside segments.** Handoffs often have no pause. 1 s windows every
   0.25 s; recursive split where mean(left)·mean(right) < 0.45, both sides ≥ 1 s; boundaries snap to
   the word gap (bonus after . ? !).
+- **Interjections are split off as an island** (`splitOffInterjection`). In "B | MOD 1.6 s | B" the
+  voice is the same on both sides, so no single boundary scores below 0.45 and the moderator's line
+  was given to B. When no single boundary is found, the stretch (≥ 1 s) least like everything around
+  it is cut out if that similarity is < 0.45. Extra splits inside one speaker's speech are harmless
+  (same label). An island under 0.8 s ("Yes.") is fingerprinted from the 1 s window around it
+  instead of going to a neighbour — right on debate2, but only at similarity 0.20, the join minimum.
+- **Segments close as soon as a sentence ends** (`cutAtSentenceEnd`). A sentence ending early in a
+  5 s segment waited for the segment to close. The open segment is now transcribed at 1.5 s and
+  then every 1 s; a full stop followed by two words (the first capitalised, not after a title) closes
+  it there, and the words after it are carried as at any forced cut, but with no speaker assumed
+  (turns change at sentence ends). Only done when the part before the cut is ≥ 2.5 s or matches a
+  known speaker at the threshold — otherwise a new voice's short first sentence would be pinned on
+  someone else. Cost: about 3x the speech-to-text work (fast replay 7.6x → ~2.5x realtime).
+- **Speaker changes snap to gaps between all words, held-back ones included.** Snapping only to
+  the kept words moved a change that coincided with the cut one gap earlier ("the best ever | at it.").
 - **Short parts can't invent speakers** (live test: "Well", "Yes.", a 1.7 s moderator line became
   new speakers). New speaker only from parts ≥ 2.5 s, or ≥ 1.5 s with similarity < 0.2 to everyone.
   Short parts join the nearest known speaker (≥ 0.2) without updating its centroid, else a neighbour.
@@ -78,12 +107,24 @@ segmentation or speaker logic and compare against this.
 - **Forced cuts:** last 3 words are held back and re-transcribed in the next segment (fixes
   mid-word cuts, mishearings like "into a company" → "in 2015"); they keep their original speaker
   label and are excluded from speaker analysis there. Repeated words at the join are de-duplicated.
+- **Carried words are checked against their first hearing** (`reconcileWithFirstHearing`). The
+  abrupt start of the carry drops its first word ("how do you" → "Do you"), turns the end of the
+  previous word into a word ("And she started"), or capitalises mid-sentence; all three are repaired
+  from the words heard before the cut. The cut also stays after the last kept word — word starts can
+  be closer than the 0.08 s lead-in, which silently dropped that word ("that you [have] to come back").
+- **Carry is capped at 2 s** and a transcript that stops > 2 s before the segment end gets its tail
+  transcribed separately. Under crosstalk Parakeet returned 6 words for 5 s of audio; holding back
+  "the last 3 words" then carried 4.4 s and made an 8 s segment. (The tail retry is a safety net:
+  it did not fire on the Trump–Clinton recording once the lead-in changed.)
+- **Sentences don't break after titles** (Mr. Mrs. Ms. Dr. Sen. Gov. Rep. Gen. Prof. St. vs.).
 - **Parakeet sometimes returns "" for abrupt segments** (~1/100). Retry with 0.3 s then 0.6 s
   silence padding fixed 120/120 random cuts. Padding everything up front is worse.
 - **SpeakerWorker flushing:** emit complete sentences; flush an unfinished one when another speaker
   starts, or after 2 s quiet if the last segment ended at a pause (8 s after a cut). Run-ons over
   30 words are released at the last comma (latency).
-- Latency = now − wall-clock time the sentence's audio ended. Measured 1.2–3 s typical.
+- Latency = now − wall-clock time the sentence's audio ended. See "Latency baseline" under Testing.
+  `Replay --realtime` paces against the clock; sleeping 100 ms per chunk fed audio at 0.9x on
+  Windows and made latency appear to grow by 15 s over 150 s.
 
 ## Gotchas
 - Compile/test against **sherpa-onnx v1.13.8** — newer Java API sources (e.g. OfflineRecognizerResult)

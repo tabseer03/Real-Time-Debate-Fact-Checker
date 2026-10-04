@@ -27,7 +27,11 @@ public final class SpeakerWorker implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(SpeakerWorker.class);
 
     /** Sentence boundary: . ! or ? then whitespace then something that starts a new sentence. */
-    private static final Pattern SENTENCE_BREAK = Pattern.compile("(?<=[.!?])\\s+(?=[A-Z0-9\"'])");
+    private static final String TITLE = "\\b(?:Mr|Mrs|Ms|Dr|Sen|Gov|Rep|Gen|Prof|St|vs)\\.";
+    private static final Pattern SENTENCE_BREAK =
+            Pattern.compile("(?<=[.!?])(?<!" + TITLE + ")\\s+(?=[A-Z0-9\"'])");
+    /** "Let me follow up with Mr." is not a finished sentence: the name is still to come. */
+    private static final Pattern ENDS_WITH_TITLE = Pattern.compile(TITLE + "$");
     /**
      * Emit an unfinished sentence once its speaker has been quiet this long — but only if their
      * last segment ended at a real pause. After a length-cap cut, the rest of the sentence is
@@ -134,7 +138,7 @@ public final class SpeakerWorker implements AutoCloseable {
     private void emitCompleteSentences() {
         String text = pending.toString();
         String[] parts = SENTENCE_BREAK.split(text);
-        boolean lastIsComplete = text.matches("(?s).*[.!?][\"']?$");
+        boolean lastIsComplete = text.matches("(?s).*[.!?][\"']?$") && !ENDS_WITH_TITLE.matcher(text).find();
         int completeCount = lastIsComplete ? parts.length : parts.length - 1;
         if (completeCount <= 0) return;
 

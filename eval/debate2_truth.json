@@ -2,73 +2,73 @@
  {
   "speaker": "B",
   "start": 0.0,
-  "end": 5.99,
+  "end": 5.92,
   "text": "The economy added fourteen million private sector jobs, and unemployment is down to five percent."
  },
  {
   "speaker": "MOD",
-  "start": 6.14,
-  "end": 6.87,
+  "start": 6.07,
+  "end": 6.81,
   "text": "Again."
  },
  {
   "speaker": "MOD",
-  "start": 6.97,
-  "end": 11.26,
+  "start": 6.91,
+  "end": 11.2,
   "text": "Let me follow up with you. How will you bring jobs back from overseas?"
  },
  {
   "speaker": "A",
-  "start": 11.38,
-  "end": 11.59,
+  "start": 11.32,
+  "end": 11.56,
   "text": "Well."
  },
  {
   "speaker": "A",
-  "start": 11.84,
-  "end": 18.72,
+  "start": 11.81,
+  "end": 18.94,
   "text": "For one thing, my father gave me a very small loan in nineteen seventy five, and I built it into a company worth many billions of dollars."
  },
  {
   "speaker": "B",
-  "start": 18.82,
-  "end": 19.62,
+  "start": 19.04,
+  "end": 19.82,
   "text": "Yes."
  },
  {
   "speaker": "A",
-  "start": 19.72,
-  "end": 25.54,
+  "start": 19.92,
+  "end": 25.58,
   "text": "Is that okay? Good. Our country is in deep trouble. China is devaluing its currency and they are the best ever at it."
  },
  {
   "speaker": "MOD",
-  "start": 25.64,
-  "end": 27.19,
+  "start": 25.68,
+  "end": 27.23,
   "text": "Let me interrupt."
  },
  {
   "speaker": "A",
-  "start": 27.29,
-  "end": 32.08,
+  "start": 27.33,
+  "end": 32.23,
   "text": "Mexico has a value added tax of about sixteen percent. That is a defective agreement."
  },
  {
   "speaker": "B",
-  "start": 32.23,
-  "end": 33.54,
+  "start": 32.38,
+  "end": 33.66,
   "text": "That is not true."
  },
  {
   "speaker": "MOD",
-  "start": 33.64,
-  "end": 35.38,
+  "start": 33.76,
+  "end": 35.39,
   "text": "Secretary, your response."
  },
  {
   "speaker": "B",
-  "start": 35.53,
-  "end": 42.42,
+  "start": 35.54,
+  "end": 42.86,
   "text": "Look, we need smart, fair trade deals, and a tax system that rewards work, not just financial transactions."
  }
 ]

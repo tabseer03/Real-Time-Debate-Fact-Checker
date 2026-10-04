@@ -107,6 +107,35 @@ final class SpeechSegmenter implements AutoCloseable {
         return out;
     }
 
+    /** Length of the segment that is still open, in samples (0 between segments). */
+    int openSamples() {
+        return inSpeech ? windows.size() * WIN : 0;
+    }
+
+    /** The audio of the open segment so far. */
+    float[] openAudio() {
+        float[] samples = new float[openSamples()];
+        for (int i = 0; i < samples.length / WIN; i++) {
+            System.arraycopy(windows.get(i), 0, samples, i * WIN, WIN);
+        }
+        return samples;
+    }
+
+    /**
+     * Close the open segment here instead of waiting for a pause or the length cap; the speech
+     * continues in a new segment. Returns null (and changes nothing) if there is too little speech.
+     */
+    Segment cutNow() {
+        List<Segment> out = new ArrayList<>(1);
+        if (inSpeech) emit(windows.size(), true, out);
+        if (out.isEmpty()) return null;
+        segmentStartWindow += windows.size();
+        windows.clear();
+        probs.clear();
+        silenceRun = 0;
+        return out.get(0);
+    }
+
     /** End of stream: close any open segment. */
     List<Segment> flush() {
         List<Segment> out = new ArrayList<>(1);
