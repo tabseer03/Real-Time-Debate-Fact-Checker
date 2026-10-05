@@ -1,8 +1,12 @@
 package com.debatechecker.audio;
 
+import com.debatechecker.claims.ClaimGate;
+import com.debatechecker.claims.ClaimPipeline;
+import com.debatechecker.claims.ClaimRewriter;
 import com.debatechecker.speech.Sentence;
 import com.debatechecker.speech.SessionPipeline;
 import com.debatechecker.speech.SpeechModels;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,27 +26,33 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Receives 16 kHz mono Int16 PCM from the extension, runs it through the speech pipeline,
- * and sends each finished sentence back to the extension as JSON.
+ * and sends each finished sentence back to the extension as JSON with the claim gate's verdict,
+ * followed by the rewritten claim for the sentences that pass.
  */
 @Component
 public class AudioStreamHandler extends BinaryWebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(AudioStreamHandler.class);
 
-    private record Connection(AudioSession recording, SessionPipeline pipeline, WebSocketSession out) {}
+    private record Connection(AudioSession recording, SessionPipeline pipeline, ClaimPipeline claims,
+                              WebSocketSession out) {}
 
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
     private final SpeechModels models;
+    private final ClaimGate gate;
+    private final ClaimRewriter rewriter;
     private final ObjectMapper json = new ObjectMapper();
     private final String recordingsDir;
     private final float speakerThreshold;
     private final int maxSpeakers;
 
-    public AudioStreamHandler(SpeechModels models,
+    public AudioStreamHandler(SpeechModels models, ClaimGate gate, ClaimRewriter rewriter,
                               @Value("${debatechecker.recordings-dir}") String recordingsDir,
                               @Value("${debatechecker.speaker-threshold}") float speakerThreshold,
                               @Value("${debatechecker.max-speakers}") int maxSpeakers) {
         this.models = models;
+        this.gate = gate;
+        this.rewriter = rewriter;
         this.recordingsDir = recordingsDir;
         this.speakerThreshold = speakerThreshold;
         this.maxSpeakers = maxSpeakers;
@@ -54,15 +64,60 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
         // Sentences arrive from several speaker threads; plain WebSocketSession isn't safe for
         // concurrent sends, the decorator serializes them.
         WebSocketSession out = new ConcurrentWebSocketSessionDecorator(ws, 5_000, 512 * 1024);
-        SessionPipeline pipeline = new SessionPipeline(id, models, speakerThreshold, maxSpeakers,
-                sentence -> send(id, out, sentence));
-        connections.put(ws.getId(), new Connection(new AudioSession(id, recordingsDir), pipeline, out));
+        ClaimPipeline claims = new ClaimPipeline(id, gate, rewriter, new ClaimPipeline.Listener() {
+            @Override
+            public void sentence(Sentence sentence, ClaimGate.Result verdict) {
+                sendSentence(id, out, sentence, verdict);
+            }
+
+            @Override
+            public void claim(ClaimPipeline.Claim claim) {
+                sendClaim(id, out, claim);
+            }
+
+            @Override
+            public void speakers(Map<String, String> names) {
+                log.info("[{}] SPEAKERS {}", id, names);
+                Map<String, Object> msg = new LinkedHashMap<>();
+                msg.put("type", "speakers");
+                msg.put("names", names);
+                send(id, out, msg);
+            }
+
+            @Override
+            public void newSpeaker(String speaker, String said, String guess) {
+                log.info("[{}] NEW SPEAKER {}: {}", id, speaker, said);
+                Map<String, Object> msg = new LinkedHashMap<>();
+                msg.put("type", "new-speaker");
+                msg.put("speaker", speaker);
+                msg.put("text", said);
+                msg.put("guess", guess);
+                send(id, out, msg);
+            }
+        });
+        SessionPipeline pipeline = new SessionPipeline(id, models, speakerThreshold, maxSpeakers, claims::accept);
+        connections.put(ws.getId(), new Connection(new AudioSession(id, recordingsDir), pipeline, claims, out));
         log.info("[{}] connected", id);
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession ws, TextMessage message) {
         log.info("[{}] control: {}", ws.getId().substring(0, 8), message.getPayload());
+        Connection c = connections.get(ws.getId());
+        if (c == null) return;
+        try {
+            JsonNode msg = json.readTree(message.getPayload());
+            String type = msg.path("type").asText();
+            if ("start".equals(type)) {
+                c.claims().setTitle(msg.path("tabTitle").asText(""));
+            } else if ("speaker-name".equals(type) && msg.path("speaker").asText().matches("S\\d{1,2}")) {
+                // The user's answer to a "new-speaker" message.
+                c.claims().nameSpeaker(msg.path("speaker").asText(), msg.path("name").asText(""),
+                        msg.path("moderator").asBoolean(false));
+            }
+        } catch (IOException e) {
+            log.warn("[{}] control message is not JSON", ws.getId().substring(0, 8));
+        }
     }
 
     @Override
@@ -79,6 +134,7 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
         if (c != null) {
             c.pipeline().close();
             c.recording().close();
+            c.claims().close();
         }
         log.info("[{}] closed: {}", ws.getId().substring(0, 8), status);
     }
@@ -88,20 +144,40 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
         log.warn("[{}] transport error: {}", ws.getId().substring(0, 8), ex.getMessage());
     }
 
-    private void send(String id, WebSocketSession out, Sentence s) {
-        log.info("[{}] SENTENCE [{}] ({} ms) {}", id, s.speaker(), s.latencyMs(), s.text());
+    private void sendSentence(String id, WebSocketSession out, Sentence s, ClaimGate.Result verdict) {
+        log.info("[{}] SENTENCE [{}] ({} ms) {} {} {}", id, s.speaker(), s.latencyMs(), verdict.category(),
+                String.format("%.2f", verdict.factual()), s.text());
+        Map<String, Object> msg = new LinkedHashMap<>();
+        msg.put("type", "sentence");
+        msg.put("speaker", s.speaker());
+        msg.put("text", s.text());
+        msg.put("start", s.audioStartSec());
+        msg.put("end", s.audioEndSec());
+        msg.put("latencyMs", s.latencyMs());
+        msg.put("category", verdict.category().name());
+        msg.put("factual", verdict.factual());
+        send(id, out, msg);
+    }
+
+    private void sendClaim(String id, WebSocketSession out, ClaimPipeline.Claim c) {
+        log.info("[{}] CLAIM [{}] ({} ms) {}", id, c.sentence().speaker(), c.latencyMs(), c.claim());
+        Map<String, Object> msg = new LinkedHashMap<>();
+        msg.put("type", "claim");
+        msg.put("speaker", c.sentence().speaker());
+        msg.put("claim", c.claim());
+        msg.put("sentence", c.sentence().text());
+        msg.put("start", c.sentence().audioStartSec());
+        msg.put("end", c.sentence().audioEndSec());
+        msg.put("latencyMs", c.latencyMs());
+        send(id, out, msg);
+    }
+
+    private void send(String id, WebSocketSession out, Map<String, Object> msg) {
         if (!out.isOpen()) return;
         try {
-            Map<String, Object> msg = new LinkedHashMap<>();
-            msg.put("type", "sentence");
-            msg.put("speaker", s.speaker());
-            msg.put("text", s.text());
-            msg.put("start", s.audioStartSec());
-            msg.put("end", s.audioEndSec());
-            msg.put("latencyMs", s.latencyMs());
             out.sendMessage(new TextMessage(json.writeValueAsString(msg)));
         } catch (IOException | IllegalStateException e) {
-            log.warn("[{}] could not send sentence: {}", id, e.getMessage());
+            log.warn("[{}] could not send {}: {}", id, msg.get("type"), e.getMessage());
         }
     }
 }

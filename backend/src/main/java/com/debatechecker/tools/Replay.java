@@ -1,5 +1,9 @@
 package com.debatechecker.tools;
 
+import com.debatechecker.claims.ClaimGate;
+import com.debatechecker.claims.ClaimPipeline;
+import com.debatechecker.claims.ClaimRewriter;
+import com.debatechecker.speech.Sentence;
 import com.debatechecker.speech.SessionPipeline;
 import com.debatechecker.speech.SpeechModels;
 
@@ -23,9 +27,12 @@ public final class Replay {
 
     public static void main(String[] rawArgs) throws Exception {
         boolean realtime = java.util.Arrays.asList(rawArgs).contains("--realtime");
-        String[] args = java.util.Arrays.stream(rawArgs).filter(a -> !a.equals("--realtime")).toArray(String[]::new);
+        // --title=Some_Video_Title (underscores for spaces): what the extension would send as the tab title
+        String title = java.util.Arrays.stream(rawArgs).filter(a -> a.startsWith("--title="))
+                .map(a -> a.substring(8).replace('_', ' ')).findFirst().orElse("");
+        String[] args = java.util.Arrays.stream(rawArgs).filter(a -> !a.startsWith("--")).toArray(String[]::new);
         if (args.length < 1) {
-            System.err.println("usage: Replay <file.wav> [speakerThreshold] [modelsDir] [--realtime]");
+            System.err.println("usage: Replay <file.wav> [speakerThreshold] [modelsDir] [--realtime] [--title=Video_Title] [--name=S0=Some_Name[,moderator]]");
             System.exit(1);
         }
         Path wav = Path.of(args[0]);
@@ -38,12 +45,48 @@ public final class Replay {
                 modelsDir.resolve("nemo_en_titanet_small.onnx"),
                 4, 0.3f, 5f));
 
+        ClaimGate gate = new ClaimGate(modelsDir.resolve("claim-gate"));
+        // Same defaults as application.properties. Without Ollama running, sentences are only classified.
+        ClaimRewriter llm = new ClaimRewriter("http://127.0.0.1:11434", "gemma3:4b", java.time.Duration.ofSeconds(10));
+        ClaimPipeline claims = new ClaimPipeline("replay", gate, llm.warmUp() ? llm : null, new ClaimPipeline.Listener() {
+            @Override
+            public void sentence(Sentence s, ClaimGate.Result verdict) {
+                System.out.printf("%6.1fs-%5.1fs  [%s]  %-10s %.2f  %s%s%n",
+                        s.audioStartSec(), s.audioEndSec(), s.speaker(), verdict.category(),
+                        verdict.factual(), s.text(),
+                        realtime ? "   (latency " + s.latencyMs() + " ms)" : "");
+            }
+
+            @Override
+            public void claim(ClaimPipeline.Claim c) {
+                System.out.printf("%6.1fs-%5.1fs  [%s]  CLAIM            %s%s%n",
+                        c.sentence().audioStartSec(), c.sentence().audioEndSec(), c.sentence().speaker(), c.claim(),
+                        realtime ? "   (latency " + c.latencyMs() + " ms)" : "");
+            }
+
+            @Override
+            public void speakers(java.util.Map<String, String> names) {
+                System.out.println("                      SPEAKERS         " + names);
+            }
+
+            @Override
+            public void newSpeaker(String speaker, String said, String guess) {
+                System.out.println("                [" + speaker + "]  NEW SPEAKER      " + said);
+            }
+        });
+        claims.setTitle(title);
+        // --name=S2=Donald_Trump or --name=S0=Lester_Holt,moderator: what the user would type in the extension
+        for (String a : rawArgs) {
+            if (!a.startsWith("--name=")) continue;
+            String[] kv = a.substring(7).split("=", 2);
+            boolean moderator = kv[1].endsWith(",moderator");
+            claims.nameSpeaker(kv[0], kv[1].replace(",moderator", "").replace('_', ' '), moderator);
+        }
+
         ByteBuffer pcm = readPcm(wav);
         long start = System.nanoTime();
         try (SessionPipeline pipeline = new SessionPipeline("replay", models, threshold, 6,
-                s -> System.out.printf("%6.1fs-%5.1fs  [%s]  %s%s%n",
-                        s.audioStartSec(), s.audioEndSec(), s.speaker(), s.text(),
-                        realtime ? "   (latency " + s.latencyMs() + " ms)" : ""))) {
+                claims::accept)) {
             // Feed in the same 100 ms chunks the extension sends.
             while (pcm.hasRemaining()) {
                 int n = Math.min(3200, pcm.remaining());
@@ -64,6 +107,8 @@ public final class Replay {
         double wallSec = (System.nanoTime() - start) / 1e9;
         System.out.printf("%nprocessed %.1fs of audio in %.1fs (%.1fx faster than realtime)%n",
                 audioSec, wallSec, audioSec / wallSec);
+        claims.close();
+        gate.close();
         models.close();
     }
 

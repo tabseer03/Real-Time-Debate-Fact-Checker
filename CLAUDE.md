@@ -30,11 +30,32 @@ fact-checked. **Target: < 5 s from a claim being spoken to its verdict on screen
 - **Open: the latency tail.** Mostly speaker changes and crosstalk, but some slow sentences sit
   inside one speaker's turn ("We also have to make the economy fairer." 7.2 s, "She's been doing
   this for 30 years." 7.3 s) and the cause of those has not been looked at. Start there.
-- Next: Milestone 3 (classification), 4 (fact-checking), 5 (on-page overlay). See bottom.
+- Milestone 3, part 1 ✅ claim gate (2026-10-05): every sentence gets FACT_CLAIM / OPINION / JUNK
+  from a small fine-tuned classifier (`claims/ClaimGate`, ~7 ms on CPU) and the result is sent to
+  the extension. Confirmed live in Chrome (session-c51d98d5, 5.5 min of the same debate).
+- Milestone 3, part 2 ✅ rewriting (2026-10-05): sentences the gate passes are rewritten into
+  standalone claims by gemma3:4b in Ollama, 100% on the GPU, and sent as {"type":"claim",...}.
+  Verified by `Replay --realtime` on session-c51d98d5; not yet run live in Chrome. Quality is the
+  weak point (see "Rewriting" under Decisions).
+- Speaker names ✅ (2026-10-05): voices get names from how people are addressed, plus the video
+  title (`claims/SpeakerNames`); sent as {"type":"speakers","names":{...}} and used in the LLM
+  prompt. Checked on three transcripts of the one debate we have; the extension's new `tabTitle`
+  field has not been run live yet.
+- Ask-the-user names ✅ backend, ⚠ page card untested (2026-10-05, user's idea): when a new voice
+  has said 6 words the backend sends {"type":"new-speaker","speaker","text","guess"}; the extension
+  shows a card on the YouTube page (`extension/overlay.js`: name box, Moderator checkbox, Save /
+  Skip) and answers {"type":"speaker-name","speaker","name","moderator"}. Tested with a script
+  acting as the extension against the real server (prompts at the right moments, names used in
+  later claims). The card itself has never been run in Chrome — check it first.
+- **Open: rewriting faithfulness.** Still the weak point after names (see "Rewriting known
+  limits"). Fix before milestone 4.
+- Next: Milestone 4 (fact-checking), 5 (on-page overlay). See bottom.
 
 ## Layout
 ```
-extension/            MV3: service-worker.js (icon click → tabCapture stream id → offscreen doc)
+extension/            MV3: service-worker.js (icon click → tabCapture stream id → offscreen doc;
+                      injects overlay.js and relays offscreen → page messages, "to-tab")
+                      overlay.js (content script: "who is this new speaker?" card on the page)
                       offscreen.js (getUserMedia(tab) → AudioWorklet → WebSocket ws://localhost:8080/audio)
                       pcm-worklet.js (mono, resample to 16 kHz, Int16, 100 ms = 3200-byte chunks)
 backend/              Spring Boot; pom pulls sherpa-onnx v1.13.8 from JitPack (+ win-x64 natives)
@@ -49,6 +70,15 @@ backend/              Spring Boot; pom pulls sherpa-onnx v1.13.8 from JitPack (+
   speech/SpeakerWorker       one virtual thread per speaker: stitch parts into sentences,
                              keeps last 5 sentences as context (for milestone 3 claim rewriting)
   tools/Replay               runs a .wav through the same pipeline (fast, or --realtime for latency)
+  claims/ClaimGate           scores a sentence with models/claim-gate/gate.onnx; WordPieceTokenizer
+                             is BERT's tokenizer in Java; GateCheck compares both against Python
+  claims/ClaimRewriter       one Ollama /api/chat call per passed sentence (prompt + examples here)
+  claims/ClaimPipeline       per session: gate every sentence, queue passed ones for the LLM on
+                             one thread, keeps the last 4 lines (all speakers) as context
+  claims/SpeakerNames        who S0/S1/S2 are; NamesCheck runs it over a saved Replay transcript
+classifier/                  Python: compare.py (feature/model comparison), finetune.py (trains the
+                             gate), export_onnx.py (writes models/claim-gate/ + data/parity.tsv).
+                             data/, model/, .venv/ are gitignored; .venv has GPU PyTorch (cu126)
 models/                      (gitignored) silero_vad.onnx, nemo_en_titanet_small.onnx,
                              sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/ — fetch with download-models.ps1
 eval/                        synthetic test debates + ground truth (see "Testing")
@@ -133,6 +163,72 @@ segmentation or speaker logic and compare against this.
 - **SpeakerWorker flushing:** emit complete sentences; flush an unfinished one when another speaker
   starts, or after 2 s quiet if the last segment ended at a pause (8 s after a cut). Run-ons over
   30 words are released at the last comma (latency).
+- **Claim gate is a small classifier, not the LLM** (user's suggestion, 2026-10-05). The LLM is
+  kept for rewriting (and milestone 4 verdicts) and only sees sentences the gate passes. Trained on
+  ClaimBuster (Zenodo 3609356, CC-BY; labels non-factual / unimportant factual / check-worthy),
+  split by debate: 2016 = test (includes our live recording), 2012 = dev, rest = train. On the 2016
+  test set, macro F1: TF-IDF + XGBoost 0.52, TF-IDF + logreg 0.60, MiniLM embeddings + logreg 0.61,
+  fine-tuned all-MiniLM-L6-v2 0.70 — so the fine-tuned model. XGBoost lost to logreg on both features.
+- **Gate threshold 0.0506 on P(unimportant factual) + P(check-worthy)**, chosen on dev to keep 95%
+  of check-worthy sentences. On test it passes 56.9% of sentences and keeps 94.2% of check-worthy
+  (dev 90% target: passes 45.4%, keeps 87.8%; dev 98%: passes 69.1%, keeps 97.9%). The low threshold
+  lets some opinions through ("That was a disaster." 0.07) and crosstalk fragments score as factual
+  ("It's the single" 0.96). JUNK is only a rule: blocked and under 3 words.
+- **Java gate must match Python**: `claims.GateCheck` on the 2,745 test sentences gave identical
+  token ids, score difference ≤ 0.000003, same pass rate. Re-run it after retraining or touching
+  the tokenizer (needs classifier/data/parity.tsv from export_onnx.py).
+- **Rewriting: gemma3:4b, chosen for faithfulness** (`ollama pull gemma3:4b`). Compared on the 33
+  passed sentences of session-c51d98d5 with the same prompt: qwen2.5:3b (median 400 ms) mostly
+  copied the sentence and dropped real claims; llama3.2:3b (350 ms) resolved references but turned
+  "can't bring" into "can bring" and lost "Mr. Trump"; gemma3:4b (720 ms alone) gave "Mr. Trump has
+  not released his tax returns." and no meaning flips. All three run 100% on the GPU; gemma uses
+  3.7 of the 4 GB, so nothing else fits beside it.
+- **Rewriting prompt: one claim, minimal edit, 5 worked examples, 4 lines of context.** The first
+  prompt (list of claims, 6 lines of context, no examples) made the 3B model rewrite the context
+  instead of the sentence and invent facts. `num_gpu=99` so Ollama fails rather than spilling onto
+  the CPU; `num_ctx` 2048, temperature 0, JSON schema output.
+- **Rewriting numbers** (`--realtime`, session-c51d98d5): sentence latency unchanged by the LLM
+  (median 2097 / p90 5848 / max 7774, 10 of 70 over 5 s; without it 2081 / 5915 / 7828, 10 of 70).
+  Claim ready at median 3228 / p90 7819 / max 9375 ms after the audio, 7 of 32 over 5 s; the
+  rewriting itself adds median 1080 / p90 1908 / max 2208 ms — over the 1 s budget, and it leaves
+  under 2 s for a verdict at the median.
+- **Rewriting known limits:** the model never returns "nothing to check", so moderator lines
+  ("This is Secretary Clinton's two minutes, please.") and fragments come out as claims (only
+  sentences under 4 words are skipped, by rule); "it"/"that" often stay unresolved ("It got us into
+  the mess we were in in 2008 and 2009."); "you" can be resolved to the wrong side ("S2 proposed a
+  tax benefit for S2's family"). Seen on d5ca3d24 with names on: a hypothetical turned into a
+  statement ("it's one thing to have 20 trillion in debt, and our roads are good" → "The country's
+  roads and bridges are in great shape ..."), invented detail ("650" → "$650,000"; "the report that
+  said 650" → "Donald Trump's assets were worth $650 million"), and "Donald Trump stated that ..."
+  wrappers around opinions.
+- **Speaker names come from addresses, not from the LLM** (deterministic, no GPU time). "Mr.
+  Trump?" followed by another voice saying ≥ 12 words = that voice is Trump (12 words because a
+  new speaker's first short line often lands on a known voice). Saying a name counts against being
+  that person; score = 2 × answered − mentioned; a name needs score ≥ 2 and a lead of 2, and is then
+  kept while its score stays ≥ 1 (one stitched-in "Mr. Trump," un-named Trump before that). A voice
+  that hands the floor to two different people is "the moderator". An address is a title + surname
+  in the first words, the last words, or between commas.
+- **Title use:** "Mr. Trump" becomes "Donald Trump" if the title has it; and if the title pairs a
+  named person with one other name ("Hillary Clinton And Donald Trump"), the other name goes to the
+  single remaining voice with ≥ 100 words that has not handed the floor to anyone or said that
+  name. This is a guess by elimination — the riskiest rule here; drop it first if names go wrong.
+  **It has only been tested with a made-up title.** The real title of the test video is "Full
+  video: Trump-Clinton first presidential debate": no first names, no "X And Y", so on this video
+  the title does nothing and names stay "Secretary Clinton" / "Mr. Trump" unless the user types them.
+- **A name typed by the user wins** over everything worked out, and no other voice can then be
+  worked out to have that surname. The automatic rules stay as the fallback for skipped voices.
+  A voice is announced after 6 words, not at its first sentence, so the user has something to
+  recognise and a stray fragment on a bogus voice never asks.
+- **Moderator sentences are rewritten like anyone else's.** Skipping them was tried and undone the
+  same day: live (session-374fafcc) it dropped "There's been a record six straight years of job
+  growth ..." and "nearly half of Americans are living paycheck to paycheck". Procedural lines
+  ("This is Secretary Clinton's two minutes, please.") therefore still come out as claims.
+- **Names results** (`claims.NamesCheck`, same debate): 18-min run — Clinton at 25 s, Trump and
+  moderator at 159 s; session-c51d98d5 — Trump 16 s, all three 121 s; session-d5ca3d24 — Trump (and
+  with the title, Clinton) at 144 s. No wrong name and no change after assignment in any of them.
+  Before names are known claims still say "He ..." / "S0 ...": in d5ca3d24 all of Clinton's claims
+  come before 144 s. Rewriting with names (longer prompt, 6 examples) adds median 994 / p90 2111 /
+  max 2766 ms on d5ca3d24.
 - Latency = now − wall-clock time the sentence's audio ended. See "Latency baseline" under Testing.
   `Replay --realtime` paces against the clock; sleeping 100 ms per chunk fed audio at 0.9x on
   Windows and made latency appear to grow by 15 s over 150 s.
@@ -140,17 +236,25 @@ segmentation or speaker logic and compare against this.
 ## Gotchas
 - Compile/test against **sherpa-onnx v1.13.8** — newer Java API sources (e.g. OfflineRecognizerResult)
   don't match the v1.13.8 natives and crash the JVM in JNI.
-- The extension needs the `activeTab` permission, or `tab.url` is undefined.
+- **Microsoft's onnxruntime.dll does not load in this JVM** ("DLL initialization routine failed"):
+  it needs a newer Visual C++ runtime than the msvcp140.dll 14.36 in JDK 22's bin folder. ClaimGate
+  therefore loads sherpa-onnx's natives first and sets `onnxruntime.native.onnxruntime.skip`, so
+  the Java API runs on sherpa's onnxruntime.dll (1.28.2). Keep the `onnxruntime` dependency at 1.28.x.
+- `-Dspring-boot.run.workingDirectory=.` resolved to `backend/` when tried on 2026-10-05 (models
+  not found); an absolute path to the `debate-checker` folder worked.
+- Call Ollama at `127.0.0.1`, not `localhost`: from Python the name lookup added ~2 s to every
+  request on this machine. Ollama must be running (tray app); without it the backend still starts
+  and classifies, and logs "Claim rewriting is off".
+- The extension needs the `activeTab` permission, or `tab.url` is undefined. `scripting` +
+  `activeTab` is what lets it inject overlay.js; the offscreen document has no `chrome.tabs`, so
+  messages for the page go through the service worker.
+- overlay.js must not use `innerHTML`: YouTube enforces Trusted Types.
 - Capturing a tab mutes it; offscreen.js reconnects the source to `audioCtx.destination`.
 - `ConcurrentWebSocketSessionDecorator` is required: sentences are sent from several speaker threads.
 - "could not send sentence … session has been closed" at stop is harmless (last sentences flush
   after the extension closes the socket).
 
 ## Next milestones (planned, not started)
-3. **Classification** with a local LLM via Ollama on the RTX 3050 (4 GB VRAM → ~3–4B model at Q4,
-   e.g. Qwen2.5-3B or Llama-3.2-3B). Per sentence: rewrite into standalone claim(s) using the
-   speaker's recent context (SpeakerWorker.recentContext), then FACT_CLAIM / OPINION / JUNK as JSON.
-   Run it async per speaker so it never blocks transcription. Budget: < 1 s.
 4. **Fact-checking (free):** Google Fact Check Tools API (ClaimReview) first, then Wikipedia/Wikidata
    APIs (or self-hosted SearXNG), then LLM verdict TRUE / FALSE / MISLEADING / UNVERIFIABLE with
    sources. Cache by claim embedding (debaters repeat themselves). Show "checking…" immediately.

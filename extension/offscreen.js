@@ -8,6 +8,7 @@ let stream = null;
 let audioCtx = null;
 let workletNode = null;
 let ws = null;
+let tabId = null;
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.target !== 'offscreen') return;
@@ -15,11 +16,27 @@ chrome.runtime.onMessage.addListener((msg) => {
     start(msg).catch(reportError);
   } else if (msg.type === 'stop-capture') {
     stop();
+  } else if (msg.type === 'speaker-name') {
+    // The user's answer from the on-page card.
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'speaker-name', speaker: msg.speaker, name: msg.name, moderator: msg.moderator }));
+    }
   }
 });
 
-async function start({ streamId, tabUrl }) {
+function toPage(type, payload) {
+  if (tabId == null) return;
+  chrome.runtime.sendMessage({
+    target: 'service-worker',
+    type: 'to-tab',
+    tabId,
+    message: { target: 'overlay', type, payload }
+  });
+}
+
+async function start({ streamId, tabId: id, tabUrl, tabTitle }) {
   if (stream) return; // already running
+  tabId = id;
 
   stream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -54,7 +71,8 @@ async function start({ streamId, tabUrl }) {
       sampleRate: TARGET_SAMPLE_RATE,
       encoding: 'pcm_s16le',
       channels: 1,
-      tabUrl
+      tabUrl,
+      tabTitle
     }));
   };
   // Milestone 2: the backend sends back finished sentences. For now just log them;
@@ -63,7 +81,14 @@ async function start({ streamId, tabUrl }) {
     if (typeof e.data !== 'string') return;
     const msg = JSON.parse(e.data);
     if (msg.type === 'sentence') {
-      console.log(`[${msg.speaker}] (${msg.latencyMs} ms) ${msg.text}`);
+      console.log(`[${msg.speaker}] (${msg.latencyMs} ms) ${msg.category} ${msg.text}`);
+    } else if (msg.type === 'claim') {
+      console.log(`[${msg.speaker}] (${msg.latencyMs} ms) CLAIM ${msg.claim}`);
+    } else if (msg.type === 'speakers') {
+      console.log('SPEAKERS ' + Object.entries(msg.names).map(([label, name]) => `${label} = ${name}`).join(', '));
+    } else if (msg.type === 'new-speaker') {
+      console.log(`NEW SPEAKER ${msg.speaker}: ${msg.text}`);
+      toPage('new-speaker', msg);
     }
   };
   ws.onclose = (e) => {
@@ -82,6 +107,8 @@ async function start({ streamId, tabUrl }) {
 function stop() {
   const s = stream;
   stream = null; // mark stopped before closing the socket so onclose doesn't report an error
+  toPage('stop');
+  tabId = null;
   if (ws) { try { ws.send(JSON.stringify({ type: 'stop' })); } catch (_) {} ws.close(); ws = null; }
   if (workletNode) { workletNode.port.onmessage = null; workletNode.disconnect(); workletNode = null; }
   if (audioCtx) { audioCtx.close(); audioCtx = null; }

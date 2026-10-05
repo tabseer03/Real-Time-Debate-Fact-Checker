@@ -30,12 +30,16 @@ async function startCapture(tab) {
     });
   }
 
+  // The on-page card that asks who each new voice is. activeTab (the icon click) allows this.
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['overlay.js'] });
+
   await chrome.runtime.sendMessage({
     target: 'offscreen',
     type: 'start-capture',
     streamId,
     tabId: tab.id,
-    tabUrl: tab.url
+    tabUrl: tab.url,
+    tabTitle: tab.title
   });
 
   await chrome.action.setBadgeText({ text: 'ON', tabId: tab.id });
@@ -74,7 +78,10 @@ chrome.action.onClicked.addListener(async (tab) => {
 // Status messages from the offscreen document (e.g. WebSocket dropped).
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.target !== 'service-worker') return;
-  if (msg.type === 'capture-error') {
+  if (msg.type === 'to-tab') {
+    // The offscreen document has no chrome.tabs; it asks us to pass messages to the page.
+    chrome.tabs.sendMessage(msg.tabId, msg.message).catch(() => {});
+  } else if (msg.type === 'capture-error') {
     console.error('Offscreen error:', msg.error);
     flashBadge('ERR', '#b91c1c');
     chrome.offscreen.closeDocument().catch(() => {});

@@ -4,6 +4,10 @@ eval/voices/
 # per-session audio recordings
 recordings/
 eval/*.wav
+# ClaimBuster training data and cached embeddings
+classifier/data/
+classifier/model/
+classifier/.venv/
 # build output / IDE
 backend/target/
 .idea/

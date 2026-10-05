@@ -48,6 +48,14 @@
             <artifactId>sherpa-onnx-native-lib-win-x64</artifactId>
             <version>${sherpa-onnx.version}</version>
         </dependency>
+        <!-- Java API for the claim gate (classifier/). Only its JNI bridge is used: ClaimGate runs it
+             on the onnxruntime.dll inside the sherpa-onnx natives (1.28.2 in v1.13.8), so keep this
+             at the same minor version. -->
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>1.28.0</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
