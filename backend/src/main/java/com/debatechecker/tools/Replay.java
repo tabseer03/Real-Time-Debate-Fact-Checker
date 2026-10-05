@@ -3,6 +3,10 @@ package com.debatechecker.tools;
 import com.debatechecker.claims.ClaimGate;
 import com.debatechecker.claims.ClaimPipeline;
 import com.debatechecker.claims.ClaimRewriter;
+import com.debatechecker.factcheck.FactChecker;
+import com.debatechecker.factcheck.GoogleFactCheck;
+import com.debatechecker.factcheck.MinuteDigest;
+import com.debatechecker.factcheck.WikipediaEvidence;
 import com.debatechecker.speech.Sentence;
 import com.debatechecker.speech.SessionPipeline;
 import com.debatechecker.speech.SpeechModels;
@@ -48,6 +52,17 @@ public final class Replay {
         ClaimGate gate = new ClaimGate(modelsDir.resolve("claim-gate"));
         // Same defaults as application.properties. Without Ollama running, sentences are only classified.
         ClaimRewriter llm = new ClaimRewriter("http://127.0.0.1:11434", "gemma3:4b", java.time.Duration.ofSeconds(10));
+        // The Google key comes from the environment, as in application.properties; without it only Wikipedia is used.
+        java.time.Duration checkTimeout = java.time.Duration.ofSeconds(8);
+        FactChecker checker = new FactChecker(
+                new GoogleFactCheck(System.getenv().getOrDefault("GOOGLE_FACTCHECK_KEY", ""), checkTimeout),
+                new WikipediaEvidence("DebateFactChecker/0.1 (personal project)", checkTimeout));
+        // Once a minute of audio, as in the live server: each speaker's claims and what the check found.
+        MinuteDigest digest = new MinuteDigest("replay", checker, 60, d -> {
+            StringBuilder block = new StringBuilder("\n   DIGEST ");
+            for (String line : MinuteDigest.describe(d)) block.append(line).append("\n   ");
+            System.out.println(block);
+        });
         ClaimPipeline claims = new ClaimPipeline("replay", gate, llm.warmUp() ? llm : null, new ClaimPipeline.Listener() {
             @Override
             public void sentence(Sentence s, ClaimGate.Result verdict) {
@@ -55,6 +70,7 @@ public final class Replay {
                         s.audioStartSec(), s.audioEndSec(), s.speaker(), verdict.category(),
                         verdict.factual(), s.text(),
                         realtime ? "   (latency " + s.latencyMs() + " ms)" : "");
+                digest.heard(s.audioEndSec());
             }
 
             @Override
@@ -63,6 +79,7 @@ public final class Replay {
                         c.sentence().audioStartSec(), c.sentence().audioEndSec(), c.sentence().speaker(),
                         c.rewritten() ? "CLAIM" : "CLAIM (as said)", c.claim(),
                         realtime ? "   (latency " + c.latencyMs() + " ms)" : "");
+                digest.add(c);
             }
 
             @Override
@@ -109,6 +126,8 @@ public final class Replay {
         System.out.printf("%nprocessed %.1fs of audio in %.1fs (%.1fx faster than realtime)%n",
                 audioSec, wallSec, audioSec / wallSec);
         claims.close();
+        digest.close();
+        checker.close();
         gate.close();
         models.close();
     }

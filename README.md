@@ -13,8 +13,15 @@ What it does today:
 - **Rewrites each claim so it stands alone** ("They're going to Mexico." → "American jobs are
   fleeing to Mexico.") with a local LLM, and checks the rewrite against what was actually said.
 
-Not built yet: the fact-check verdicts themselves and the on-page display of results (see
-[Roadmap](#roadmap)). For now the output appears in the extension's console and the backend log.
+- **Reports once a minute, speaker by speaker**: what each one claimed in that minute and what the
+  check found for each claim.
+- **Looks each claim up** in fact-checks already published (PolitiFact, FactCheck.org and others,
+  through Google's Fact Check Tools API) and takes the verdict from their rating. A claim with no
+  published fact-check gets `UNVERIFIABLE` with related Wikipedia passages — which, so far, is
+  nearly every claim (see [Known limits](#known-limits)).
+
+Not built yet: the on-page display of results (see [Roadmap](#roadmap)). For now the output appears
+in the extension's console and the backend log.
 
 ## How it works
 
@@ -35,10 +42,15 @@ YouTube tab ─▶ extension (16 kHz PCM, 100 ms chunks) ─▶ WebSocket ─▶
              ClaimChecker ── rejects rewrites that add or change things; falls back to the
                              speaker's own words
 
- ─▶ JSON back to the extension: sentences, claims, speaker names, "who is this?" prompts
+ factcheck/ FactChecker (one for the server; remembers claims it has already checked)
+             GoogleFactCheck ── published fact-checks of this claim; their rating is the verdict
+             WikipediaEvidence ── otherwise: passages from the three best-matching pages
+
+ ─▶ JSON back to the extension: sentences, claims, verdicts, speaker names, "who is this?" prompts
 ```
 
 Speech models run on the CPU. The LLM runs entirely on the GPU, so the two do not compete.
+Fact-checking is network calls only.
 
 ## Requirements
 
@@ -100,7 +112,19 @@ ollama pull gemma3:4b
 Without Ollama the backend still starts and classifies sentences; it logs
 `Claim rewriting is off` and sends no claims.
 
-### 4. Backend
+### 4. Fact-check key
+
+Verdicts come from Google's Fact Check Tools API, which is free but needs a key:
+[console.cloud.google.com](https://console.cloud.google.com) → create a project → *APIs & Services*
+→ enable **Fact Check Tools API** → *Credentials* → *Create credentials* → *API key*.
+
+Give it to the backend as the environment variable `GOOGLE_FACTCHECK_KEY` (IntelliJ: the run
+configuration's *Environment variables*, name typed without quotes; PowerShell:
+`$env:GOOGLE_FACTCHECK_KEY = "..."`). Do not
+put it in a file that is committed. Without a key the backend logs `No Google Fact Check key` and
+every claim comes back `UNVERIFIABLE` with Wikipedia passages only.
+
+### 5. Backend
 
 In IntelliJ, run `DebateCheckerApplication` with the working directory set to the project folder.
 Or from a terminal, with the full path to the project folder:
@@ -112,7 +136,7 @@ mvn -f backend/pom.xml spring-boot:run "-Dspring-boot.run.workingDirectory=C:\pa
 It is ready when the log shows `Started DebateCheckerApplication` and
 `LLM gemma3:4b loaded, 100% on the GPU`.
 
-### 5. Extension
+### 6. Extension
 
 `chrome://extensions` → turn on *Developer mode* → *Load unpacked* → choose the `extension` folder.
 Reload it there after any change to its files.
@@ -143,7 +167,8 @@ The backend sends these messages over the WebSocket (`ws://localhost:8080/audio`
 | `type` | Fields | When |
 |---|---|---|
 | `sentence` | `speaker`, `text`, `start`, `end`, `latencyMs`, `category`, `factual` | every finished sentence |
-| `claim` | `speaker`, `speakerName`, `claim`, `rewritten`, `sentence`, `start`, `end`, `latencyMs` | each `FACT_CLAIM`, about a second later |
+| `claim` | `id`, `speaker`, `speakerName`, `claim`, `rewritten`, `sentence`, `start`, `end`, `latencyMs` | each `FACT_CLAIM`, about a second later |
+| `digest` | `from`, `to` (seconds), `speakers`: each `speaker`, `name`, `statements`; each statement `id` (the claim's), `claim`, `sentence`, `start`, `verdict` (`TRUE` / `FALSE` / `MISLEADING` / `UNVERIFIABLE`), `status` ("confirmed", "contradicted", "misleading", "could not be verified"), `rating` (the fact-checker's own words, or `""`), `sources` (each `source`, `title`, `url`, `text`, `rating`), `repeated` | once per minute of the debate that had claims, about 10 s after the minute ends |
 | `speakers` | `names` (label → name) | whenever a name is learned or typed |
 | `new-speaker` | `speaker`, `text`, `guess` | a voice not heard before has said 6 words |
 
@@ -182,6 +207,8 @@ at real-time speed:
 |---|---|---|
 | Sentence delay | median about 2 s | 10–14% of sentences take over 5 s, mostly at speaker changes |
 | Claim delay | median about 3 s | rewriting adds about 1 s |
+| Verdicts | once a minute | a digest per speaker, about 10 s after each minute of the debate ends |
+| Claims that get a verdict | 0 of 135 and 0 of 31 on two recordings | see [Known limits](#known-limits) |
 | Claim classifier | keeps 94% of check-worthy sentences, passes 57% of all sentences | held-out 2016 debates from ClaimBuster |
 | Rewrites that pass the check | 45–60% | the rest are sent as said |
 
@@ -195,6 +222,15 @@ at real-time speed:
   the person telling it.
 - **Not everything labelled a claim is one.** Thanks and pleasantries from debaters still come out
   as claims. A moderator's housekeeping is filtered once the voice is marked as a moderator.
+- **In practice almost every claim is `UNVERIFIABLE` today.** A verdict needs a published
+  fact-check of the same claim, and Google's index rarely has one for a sentence as it was spoken:
+  on an 18-minute recording of the 2016 debate, 135 claims got 0 verdicts (for 127 Google returned
+  nothing at all). Claims worded the way fact-checkers word them do match (2 of 16 in
+  `eval/claims.txt`). The local 4B model was tried as the judge for the rest and got too many
+  wrong, even with the right passage in front of it. The Wikipedia passages are picked by shared words and are often
+  beside the point; figures and "this year" claims find nothing.
+- **Wikipedia allows roughly 10–15 lookups a minute** from one connection; past that, claims get no
+  passages for half a minute.
 - **Speaker labels are per session.** S0 in one run may be S1 in the next.
 - **English only**, and tested on two US presidential debates.
 
@@ -212,8 +248,9 @@ The reasons behind the design choices, with the measurements, are in [CLAUDE.md]
 
 ## Roadmap
 
-- **Fact-checking.** Google Fact Check Tools API first, then Wikipedia/Wikidata, then an LLM verdict
-  (true / false / misleading / unverifiable) with sources. Free sources only.
+- **Verdicts for claims nobody has fact-checked.** Needs a judge better than a 4B local model
+  (a larger model on a free tier, or a small entailment model on the CPU) and better evidence than
+  word-matched Wikipedia passages.
 - **On-page overlay.** Speaker, claim, verdict and sources shown on the YouTube page.
 
 ## History of the speech pipeline

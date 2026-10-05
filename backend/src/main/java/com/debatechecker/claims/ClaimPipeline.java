@@ -51,8 +51,10 @@ public final class ClaimPipeline implements AutoCloseable {
      * @param speakerName who said it, as far as known ("Donald Trump", else the label "S2"): a claim
      *                   left as said still says "I" and "my"
      * @param latencyMs  from the end of the sentence's audio to the claim being ready
+     * @param id         counts up within the session; the verdict that follows carries the same id
      */
-    public record Claim(Sentence sentence, String claim, boolean rewritten, String speakerName, long latencyMs) {}
+    public record Claim(Sentence sentence, String claim, boolean rewritten, String speakerName, long latencyMs,
+                        int id) {}
 
     public interface Listener {
         /** Every sentence, with the gate's verdict. Called on the speaker's thread. */
@@ -80,6 +82,8 @@ public final class ClaimPipeline implements AutoCloseable {
     private final Deque<Sentence> recent = new ArrayDeque<>();
     private final Map<String, StringBuilder> notYetAnnounced = new HashMap<>();
     private final Set<String> announced = new HashSet<>();
+    /** Only touched on the {@link #llm} thread. */
+    private int claimsSoFar;
     private final ExecutorService llm = Executors.newSingleThreadExecutor(
             Thread.ofVirtual().name("claims-", 0).factory());
 
@@ -177,7 +181,7 @@ public final class ClaimPipeline implements AutoCloseable {
                     claim = ClaimChecker.tidy(s.text(), known);
                 }
                 long latencyMs = s.latencyMs() + (System.nanoTime() - acceptedNanos) / 1_000_000;
-                listener.claim(new Claim(s, claim, rewritten, speaker, latencyMs));
+                listener.claim(new Claim(s, claim, rewritten, speaker, latencyMs, ++claimsSoFar));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

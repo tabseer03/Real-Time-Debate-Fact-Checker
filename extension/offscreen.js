@@ -84,6 +84,17 @@ async function start({ streamId, tabId: id, tabUrl, tabTitle }) {
       console.log(`[${msg.speaker}] (${msg.latencyMs} ms) ${msg.category} ${msg.text}`);
     } else if (msg.type === 'claim') {
       console.log(`[${msg.speaker}] (${msg.latencyMs} ms) ${msg.rewritten ? 'CLAIM' : 'CLAIM (as said)'} ${msg.claim}`);
+    } else if (msg.type === 'digest') {
+      // Once a minute: each speaker's claims of that minute (same ids as the claim messages) and what the check found.
+      const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+      console.log(`DIGEST ${clock(msg.from)}-${clock(msg.to)}`);
+      for (const sp of msg.speakers) {
+        console.log(`  ${sp.name} said:`);
+        for (const st of sp.statements) {
+          const source = st.verdict !== 'UNVERIFIABLE' && st.sources.length ? ` — ${st.sources[0].title} ${st.sources[0].url}` : '';
+          console.log(`    [${st.status}] ${st.claim}${source}`);
+        }
+      }
     } else if (msg.type === 'speakers') {
       console.log('SPEAKERS ' + Object.entries(msg.names).map(([label, name]) => `${label} = ${name}`).join(', '));
     } else if (msg.type === 'new-speaker') {

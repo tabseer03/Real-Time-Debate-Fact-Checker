@@ -2,7 +2,10 @@
 
 Chrome extension + Java backend that fact-checks YouTube debates in real time. Each speaker is
 handled separately; every sentence is classified FACT_CLAIM / OPINION / JUNK, and claims are
-fact-checked. **Target: < 5 s from a claim being spoken to its verdict on screen.**
+fact-checked. **Target: sentences and claims on screen within 5 s of being spoken; verdicts once
+a minute**, as a digest per speaker ("in the last minute Donald Trump said this and this; the
+first is confirmed, the second could not be verified"). The user changed this on 2026-10-05 from
+"verdict within 5 s": no free checker is both good and that fast.
 
 ## Constraints from the user (keep to these)
 - **Java** for the backend (Spring Boot 3, Java 21+; the user runs JDK 22). Plain JS for the extension.
@@ -60,7 +63,34 @@ fact-checked. **Target: < 5 s from a claim being spoken to its verdict on screen
   words can still change the meaning; and "I" inside a story someone is quoting is pinned on the
   speaker (Romney quoting a graduate, "I've got three part-time jobs." → "Romney has three
   part-time jobs." — passes the check because every word was said).
-- Next: Milestone 4 (fact-checking), 5 (on-page overlay). See bottom.
+- Milestone 4, part 1 ✅ plumbing, ❌ verdicts (2026-10-05): claims are checked by the minute
+  (`factcheck/MinuteDigest`) and sent as {"type":"digest","from","to","speakers":[{speaker, name,
+  statements:[{id, claim, sentence, start, verdict, status, rating, sources}]}]}; there is no
+  per-claim verdict message any more. A minute closes 10 s of audio after it ends; a claim that
+  arrives later goes into the next digest; the rest is sent when the session closes (live, that
+  last one is lost, because the extension has closed the socket by then). The verdict comes from a
+  published fact-check found through Google's Fact Check Tools API; with none, it is UNVERIFIABLE
+  ("could not be verified") with Wikipedia passages. Verified by Replay on session-c51d98d5 (6
+  digests, all 31 claims in them) and `MinuteDigestTest`; the handler's `sendDigest` and the
+  extension's log lines have not been run live.
+- **Result: Google Fact Check gives a real debate almost nothing.** 18-minute recording
+  (session-912c6eb1): 135 claims, 0 verdicts; for 127 of them Google returned no fact-check at all,
+  and the one near match was a different claim. session-c51d98d5: 31 claims, 0 verdicts. On 16
+  claims written by hand in a fact-checker's wording (`eval/claims.txt`): 2 verdicts, both right.
+  See "Fact-checking" under Decisions.
+- **There is no LLM verdict, on purpose:** gemma3:4b was tried as the judge and failed. So in
+  practice every claim is UNVERIFIABLE today.
+- **Open in milestone 4, and the thing to decide next:** where verdicts come from. It needs real
+  evidence (web search, not word-matched Wikipedia) and a judge better than a 4B model. Gemini
+  with search grounding does it well but its free tier allows 20 requests a day (see Decisions);
+  the user has been asked to choose. The minute digest changes the sums: one request can carry a
+  whole minute's claims (a 90-minute debate = 90 requests, not 600), and there is a minute to
+  answer in, so a slow local checker (web search + an entailment model) is possible too.
+  **Not built: checking a minute's claims in one call** — `MinuteDigest.check` still asks
+  `FactChecker` once per claim. Also seen in the digests: one argument arrives as up to nine
+  fragments ("Two and a half trillion.", "There is no leadership."); a minute's statements should
+  be merged into a few real claims before checking.
+- Next: finish Milestone 4, then 5 (on-page overlay). See bottom.
 
 ## Layout
 ```
@@ -88,6 +118,12 @@ backend/              Spring Boot; pom pulls sherpa-onnx v1.13.8 from JitPack (+
                              one thread, keeps the last 4 lines (all speakers) as context
   claims/ClaimChecker        rejects LLM rewrites that add or change things; fallback = as said
   claims/SpeakerNames        who S0/S1/S2 are; NamesCheck runs it over a saved Replay transcript
+  factcheck/FactChecker      one for the server: remembered answer → Google → Wikipedia; each lookup
+                             on its own virtual thread (network only, no GPU); rating → verdict
+  factcheck/GoogleFactCheck  claims:search; which returned review counts as "this claim" (Words)
+  factcheck/WikipediaEvidence one request = search + text of 3 pages; picks passages by shared words
+  factcheck/FactCheckTry     checks claims from a text file or the command line, no audio
+  factcheck/MinuteDigest     per session: a minute's claims → FactChecker → one report by speaker
 classifier/                  Python: compare.py (feature/model comparison), finetune.py (trains the
                              gate), export_onnx.py (writes models/claim-gate/ + data/parity.tsv).
                              data/, model/, .venv/ are gitignored; .venv has GPU PyTorch (cu126)
@@ -104,6 +140,10 @@ Run everything from the `debate-checker` folder (relative `models/` and `recordi
 - Replay a recording (the main tuning loop — no YouTube needed):
   `mvn -f backend/pom.xml -q compile exec:java "-Dexec.mainClass=com.debatechecker.tools.Replay" "-Dexec.args=recordings/session-XXXX.wav 0.45"`
   Add `--realtime` to the args to measure per-sentence latency.
+- Fact-check some claims without audio (seconds; `eval/claims.txt` has 16 well-known ones):
+  `mvn -f backend/pom.xml -q compile exec:java "-Dexec.mainClass=com.debatechecker.factcheck.FactCheckTry" "-Dexec.args=eval/claims.txt"`
+  The Google key is read from the environment variable `GOOGLE_FACTCHECK_KEY` (Replay too).
+- `mvn -f backend/pom.xml -q test` runs the fact-check matching tests (no network, no models).
 - Extension: chrome://extensions → Load unpacked `extension/`; reload after any change. Sentences
   are logged in the offscreen document's console (Inspect views: offscreen.html).
 
@@ -277,6 +317,110 @@ segmentation or speaker logic and compare against this.
   Before names are known claims still say "He ..." / "S0 ...": in d5ca3d24 all of Clinton's claims
   come before 144 s. Rewriting with names (longer prompt, 6 examples) adds median 994 / p90 2111 /
   max 2766 ms on d5ca3d24.
+- **Fact-checking: the verdict is a published fact-checker's rating, never the local LLM's.**
+  gemma3:4b was tried as the judge twice (2026-10-05) and is not reliable enough to show:
+  (1) all passages at once, verdict + supporting quote: on Wikipedia passages picked by shared
+  words, 4 of 4 wrong ("The United States has 20 trillion dollars in debt." → FALSE from a 1933
+  figure; it never answered UNVERIFIABLE); on passages picked by hand, 3 of 8 right — "Obama was
+  born in Kenya" + "born in Honolulu" → UNVERIFIABLE, "$19.57 trillion" → "20 trillion" FALSE.
+  (2) one passage at a time, SUPPORTS / CONTRADICTS / NEITHER, 5 worked examples, the debate year in
+  the prompt: 8 of 12 passages right, ~0.85 s each. Still wrong: "has not released his tax returns"
+  against both passages (backwards), a 1933 figure and a 2023 figure taken as contradicting a 2016
+  claim. A wrong TRUE / FALSE on screen is worse than none, so it is left out. Nothing bigger fits
+  the 4 GB GPU; candidates are a larger model on a free tier or a small entailment model on the CPU.
+- **Published ratings become verdicts by keyword** (`FactChecker.verdictOf`): mixed words first
+  ("half true", "missing context", one to three Pinocchios → MISLEADING), then false ("mostly false"
+  counts as FALSE), then true; anything else UNVERIFIABLE. The rating itself is always sent too.
+- **A published review counts only if it is the same claim**: each claim has ≥ 0.6 of the other's
+  content words, at least 3 shared, the same figures, and both or neither deny something. Measured
+  one way only (on the shorter claim), the real API gave "Donald Trump has not released his tax
+  returns." → FALSE from "President Donald Trump is required by law not to show his tax returns",
+  and "A 1991 ... booklet identified Barack Obama as having been born in Kenya" (True) was one word
+  from making "Barack Obama was born in Kenya." TRUE. Google returns the topic's fact-checks, most
+  of them about some narrower or meta claim; both cases are in `FactCheckMatchingTest`. The
+  remembered-answers cache uses the figure and denial guards with Jaccard ≥ 0.8 — not embeddings,
+  as first planned.
+- **Not done: reading a review of the opposite claim backwards.** "Says President Bill Clinton did
+  not sign NAFTA." is rated False, which makes "NAFTA was signed by Bill Clinton." true; the denial
+  guard just skips it. Telling a clean negation from a different claim by words alone is too risky.
+- **Google Fact Check coverage of live debate claims is about zero.** Its index holds what
+  fact-checkers chose to write up, in their wording; a debate sentence as spoken (or as rewritten)
+  rarely is one. 912c6eb1: 127 of 135 queries came back empty; keyword-only queries did no better
+  (14 of 15 empty). The only close match there shows the other hazard: the rewrite "Climate change
+  is a hoax perpetrated by the Chinese." (Clinton quoting Trump, attribution lost) against Trump's
+  "I do not say that climate change is a hoax ..." rated Mostly False. The lookup is kept because a
+  hit is a human verdict with a link, but it cannot be the main source.
+- **A small entailment model on the CPU judges better than gemma3:4b and fails safer** (Python
+  only, 2026-10-05; the user's idea of a local checker, minus the LLM agent — a small LLM reading
+  web pages on a CPU that is busy with speech would take tens of seconds per claim and judge worse
+  than gemma). MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli, passage as premise, claim as
+  hypothesis, on 17 hand-picked passages: 10 right (both tax-return passages, "40.6% ... jobless
+  for 27 weeks or longer" entails "40% ... six months or more"), 4 said neutral where a person
+  would say yes ("Clinton signed NAFTA into law", "TPP sets the gold standard"), 2 wrong:
+  "$19.57 trillion" contradicts "20 trillion" (no rounding) and a 2023 figure contradicts a 2016
+  claim (no dates). 1.9 s per passage in PyTorch on 2 threads — too slow per claim, fine per
+  minute; not tried quantised. No free web search has been tried yet to feed it.
+- **The user's fully local plan (2026-10-05): each minute, each speaker's sentences → gemma3:4b
+  cleans and filters the claims → web search on the CPU → gemma judges → digest 10–30 s later.**
+  Tried piece by piece in Python, nothing of it is in the backend yet:
+  - *Web search without a key does not work.* DuckDuckGo's HTML page gave good results (10 with
+    snippets in 0.9–1.3 s, far better than Wikipedia passages: BLS, NPR, the NYT op-ed) for about
+    six requests, then HTTP 202 and a bot challenge. Bing answers 200 with unrelated results (MS
+    Paint, Forbes billionaires, worse) once it has decided the client is a script. Mojeek and
+    Startpage show a captcha, Brave 429. So this needs a search API key (free tiers exist, with
+    monthly limits) or it stays on Wikipedia. Not decided.
+  - *gemma3:4b over a whole minute is worse than the gate + per-sentence rewrite it would
+    replace.* session-c51d98d5: 38 claims from 12 speaker-minutes against 31 now, 0.4–4.5 s per
+    call. It does not filter ("Hillary Clinton asked 'Why not?'", "Mr. Trump has a two-minute
+    answer.", predictions) and it invents ("Hillary Clinton supports Donald Trump.", "The United
+    States is losing two and a half trillion dollars in investment."). It does merge fragments
+    well ("Donald Trump has proposed a tax benefit for his family." from three lines). If used,
+    only for merging, behind the gate and `ClaimChecker`.
+  - *gemma judging search results:* only seen on the junk Bing returned, where it rightly said
+    "not enough" 12 times of 13; the one mistake is a kind to expect — a result that reports the
+    claim being made ("Trump accused Clinton of fighting ISIS her entire adult life") taken as
+    support. Not yet measured on good results.
+- **Gemini as the judge: good with Google Search grounding, but not on the free tier** (tried
+  2026-10-05 with the user's AI Studio key, Python prototypes only — nothing in the backend yet).
+  The user's Google AI Pro plan is for the Gemini app and does not change API quotas.
+  gemini-2.5-flash + `google_search` tool, thinking off: sensible, sourced answers on all 16 of
+  `eval/claims.txt`, median 4.7 s (3.2–6.1). Given the video title it worked out the debate's date
+  itself ("On October 16, 2012 ... 40.6% of unemployed Americans had been jobless for 27 weeks or
+  longer"), which fixed the two answers the first prompt got wrong for lack of a date; that second
+  prompt was right on the 3 claims it reached. Then the quota ran out: **20 requests a day** for
+  gemini-2.5-flash (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`), and for every 3.x model a
+  grounded request is refused outright (429, no free quota). 2.5-flash-lite and 2.5-pro are closed
+  to new users, so 2.5-flash will go too.
+  Without search: gemini-3.8-flash answered 3 of 16 (the rest 503 "high demand", and 5–9 s when
+  it did answer); gemini-3.5-flash-lite answered 12 of 16 in 1.1–1.9 s (plus three at 11–45 s and
+  four empty answers) and was confidently wrong from memory on at least two ("Murders in New York
+  City are up this year" → TRUE; oil production on federal land → FALSE, reason made up), with no
+  sources to show. With `google_search` the model does not return JSON reliably ("MISLEADING.
+  Donald Trump stated ..."): ask for "VERDICT: ... / REASON: ..." lines and parse those.
+  A debate makes about 7 claims a minute, so grounded Gemini needs billing switched on.
+- **Google and Wikipedia are asked at the same time**, since Google nearly always says "nothing"
+  and takes 0.8–1.9 s to say it (now and then it hangs: capped at 4 s). A Google hit cancels the
+  Wikipedia request.
+- **Wikipedia: one request per claim** (`generator=search` + `prop=cirrusdoc`, gzip, 100–700 KB).
+  Search-then-fetch-each-page was 4 requests and got 429 "retry after 37 s" after about 15. The
+  whole claim is the search query (it does not need every word to match). Passages are pairs of
+  neighbouring sentences scored by the claim's words, rarer ones more; reference-list lines are
+  dropped (quoted headlines repeat the claim's words best and say nothing); a passage needs half of
+  the claim's words, and a claim under 4 content words is not looked up ("... bureaucratic red
+  tape." had found the page "Red").
+- **Wikipedia passages are related reading, not evidence.** On 16 well-known claims
+  (`eval/claims.txt`) about 5 got a passage that bears on the claim (tax returns, the loans from
+  Trump's father, NAFTA, stop-and-frisk); figures ("40% of the unemployed ...", gasoline at 1.86)
+  and anything "this year" get nothing useful. On session-c51d98d5's own 31 claims, mostly
+  arguments rather than facts, none of the first 16 got a passage that settles it.
+- **Fact-check numbers** (`--realtime`, session-c51d98d5, Wikipedia only): sentence latency
+  unchanged (median 2026 / p90 5635 / max 7605, 10 of 70 over 5 s); claim 3131 / 6825 / 8643, 8 of 31
+  over 5 s; verdict 5722 / 9030 / 10693, **22 of 31 over 5 s**; the lookup itself 2193 / 3224 / 5229.
+  No 429 in those 31 lookups over 5.5 minutes. With Google as well, in parallel: verdict 5563 / 9171 /
+  10655, 20 of 31 over 5 s; lookup 2025 / 2762 / 6068 (that run's sentences were slower, 2277 / 6049 /
+  8363, 11 of 70 — the machine had just run other tests).
+- **The Wikipedia request is timed as a whole** (`sendAsync(...).get(timeout)`): HttpRequest's own
+  timeout stops at the headers, and one body took 40 s to arrive.
 - Latency = now − wall-clock time the sentence's audio ended. See "Latency baseline" under Testing.
   `Replay --realtime` paces against the clock; sleeping 100 ms per chunk fed audio at 0.9x on
   Windows and made latency appear to grow by 15 s over 150 s.
@@ -293,6 +437,18 @@ segmentation or speaker logic and compare against this.
 - Call Ollama at `127.0.0.1`, not `localhost`: from Python the name lookup added ~2 s to every
   request on this machine. Ollama must be running (tray app); without it the backend still starts
   and classifies, and logs "Claim rewriting is off".
+- **Wikipedia limits requests from this connection**: roughly 10–15 a minute, then 429 with
+  `retry-after` 13–37 s. Hit after 10 lookups in 40 s and after 14 in 50 s, both with 1.5 s pauses.
+  `WikipediaEvidence` then makes no request until the time is up; those claims get no passages and
+  are not remembered. Leave pauses when testing with `FactCheckTry`.
+- The Google key lives only in IntelliJ's run configuration (`.idea/workspace.xml`, gitignored), as
+  an environment variable. On 2026-10-05 its *name* had been typed with quotes
+  (`"GOOGLE_FACTCHECK_KEY"`), so the backend did not see it; check for "No Google Fact Check key" in
+  the log. A terminal run needs `$env:GOOGLE_FACTCHECK_KEY` set by hand. Never print the key.
+- `mvn` is not on PATH. IntelliJ's is at
+  `C:\Program Files\JetBrains\IntelliJ IDEA 2024.2.0.1\plugins\maven\lib\maven3\bin\mvn.cmd`.
+- Don't call Ollama while a Replay is starting: its warm-up timed out behind another request and
+  that run had rewriting off.
 - The extension needs the `activeTab` permission, or `tab.url` is undefined. `scripting` +
   `activeTab` is what lets it inject overlay.js; the offscreen document has no `chrome.tabs`, so
   messages for the page go through the service worker.
@@ -302,8 +458,12 @@ segmentation or speaker logic and compare against this.
 - "could not send sentence … session has been closed" at stop is harmless (last sentences flush
   after the extension closes the socket).
 
-## Next milestones (planned, not started)
-4. **Fact-checking (free):** Google Fact Check Tools API (ClaimReview) first, then Wikipedia/Wikidata
-   APIs (or self-hosted SearXNG), then LLM verdict TRUE / FALSE / MISLEADING / UNVERIFIABLE with
-   sources. Cache by claim embedding (debaters repeat themselves). Show "checking…" immediately.
-5. **Overlay:** content script on youtube.com showing speaker, claim, verdict, sources, timestamp.
+## Next milestones
+4. **Fact-checking (free), started.** Done: Google Fact Check lookup (works, finds almost nothing),
+   Wikipedia passages, remembered answers, verdict messages. To do: a judge for claims with no
+   published fact-check, which is nearly all of them (not gemma3:4b); better evidence than
+   word-matched Wikipedia (figures need
+   a source like BLS / FRED, or web search through self-hosted SearXNG); the claim's date ("this
+   year" in a 2012 video). "Checking…" needs no message: a claim is unchecked until the verdict with
+   its `id` arrives, and one always does.
+5. **Overlay (planned, not started):** content script on youtube.com showing speaker, claim, verdict, sources, timestamp.
