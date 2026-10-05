@@ -37,12 +37,22 @@ public final class ClaimPipeline implements AutoCloseable {
      * it is, and a stray fragment given to a bogus voice never asks.
      */
     private static final int MIN_WORDS_TO_ASK = 6;
+    /**
+     * A moderator's sentence is a claim only if the gate calls it check-worthy with at least this
+     * probability; "factual at all" is enough for a debater. Moderators mostly state housekeeping
+     * ("You have up to two minutes."), which the gate scores as factual but unimportant.
+     */
+    private static final double MODERATOR_MIN_CHECK_WORTHY = 0.5;
 
     /**
-     * @param claim      the sentence rewritten to stand alone
+     * @param claim      the sentence rewritten to stand alone, or the sentence as it was said
+     * @param rewritten  false if the LLM's rewrite failed {@link ClaimChecker} (or the LLM failed) and
+     *                   {@code claim} is the speaker's own words, which may need the lines before it
+     * @param speakerName who said it, as far as known ("Donald Trump", else the label "S2"): a claim
+     *                   left as said still says "I" and "my"
      * @param latencyMs  from the end of the sentence's audio to the claim being ready
      */
-    public record Claim(Sentence sentence, String claim, long latencyMs) {}
+    public record Claim(Sentence sentence, String claim, boolean rewritten, String speakerName, long latencyMs) {}
 
     public interface Listener {
         /** Every sentence, with the gate's verdict. Called on the speaker's thread. */
@@ -98,7 +108,7 @@ public final class ClaimPipeline implements AutoCloseable {
 
     /** Called from several speaker threads. */
     public void accept(Sentence s) {
-        ClaimGate.Result verdict = gate.classify(s.text());
+        ClaimGate.Result gateVerdict = gate.classify(s.text());
         long acceptedNanos = System.nanoTime();
         List<Sentence> context;
         Map<String, String> changedNames = null;
@@ -107,7 +117,7 @@ public final class ClaimPipeline implements AutoCloseable {
             context = List.copyOf(recent);
             recent.addLast(s);
             while (recent.size() > CONTEXT_LINES) recent.removeFirst();
-            if (names.observe(s.speaker(), s.text())) changedNames = names.roster();
+            if (names.observe(s.speaker(), s.text(), s.audioStartSec())) changedNames = names.roster();
             if (!announced.contains(s.speaker()) && !names.namedByUser(s.speaker())) {
                 StringBuilder said = notYetAnnounced.computeIfAbsent(s.speaker(), k -> new StringBuilder());
                 said.append(said.isEmpty() ? "" : " ").append(s.text());
@@ -119,6 +129,11 @@ public final class ClaimPipeline implements AutoCloseable {
                     if (!worked.equals(s.speaker())) guess = worked;
                 }
             }
+        }
+        ClaimGate.Result verdict = gateVerdict;
+        if (verdict.category() == ClaimGate.Category.FACT_CLAIM && names.isModerator(s.speaker())
+                && verdict.checkWorthy() < MODERATOR_MIN_CHECK_WORTHY) {
+            verdict = new ClaimGate.Result(ClaimGate.Category.JUNK, verdict.factual(), verdict.checkWorthy());
         }
         if (changedNames != null) listener.speakers(changedNames);
         if (saidByNewVoice != null) listener.newSpeaker(s.speaker(), saidByNewVoice, guess);
@@ -136,15 +151,33 @@ public final class ClaimPipeline implements AutoCloseable {
                 Set<String> people = new LinkedHashSet<>(names.roster().values());
                 for (ClaimRewriter.Line l : lines) people.add(l.speaker());
                 people.add(speaker);
-                String claim = rewriter.rewrite(List.copyOf(people), lines, speaker, s.text());
-                long latencyMs = s.latencyMs() + (System.nanoTime() - acceptedNanos) / 1_000_000;
-                if (claim.isEmpty()) {
-                    log.info("[{}] no claim in: {}", sessionId, s.text());
-                } else {
-                    listener.claim(new Claim(s, claim, latencyMs));
+                Set<String> known = new LinkedHashSet<>(people);
+                for (String p : people) known.add(p.replace(" (moderator)", ""));
+                known.add(s.speaker());
+
+                String claim;
+                boolean rewritten = false;
+                try {
+                    claim = ClaimChecker.tidy(rewriter.rewrite(List.copyOf(people), lines, speaker, s.text()), known);
+                    if (claim.isEmpty()) {
+                        log.info("[{}] no claim in: {}", sessionId, s.text());
+                        return;
+                    }
+                    List<String> earlier = new ArrayList<>();
+                    for (Sentence c : context) earlier.add(c.text());
+                    String problem = ClaimChecker.problem(s.text(), claim, earlier, known);
+                    if (problem == null) {
+                        rewritten = true;
+                    } else {
+                        log.info("[{}] rewrite rejected ({}): {}", sessionId, problem, claim);
+                        claim = ClaimChecker.tidy(s.text(), known);
+                    }
+                } catch (IOException e) {
+                    log.warn("[{}] could not rewrite \"{}\": {}", sessionId, s.text(), e.getMessage());
+                    claim = ClaimChecker.tidy(s.text(), known);
                 }
-            } catch (IOException e) {
-                log.warn("[{}] could not rewrite \"{}\": {}", sessionId, s.text(), e.getMessage());
+                long latencyMs = s.latencyMs() + (System.nanoTime() - acceptedNanos) / 1_000_000;
+                listener.claim(new Claim(s, claim, rewritten, speaker, latencyMs));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

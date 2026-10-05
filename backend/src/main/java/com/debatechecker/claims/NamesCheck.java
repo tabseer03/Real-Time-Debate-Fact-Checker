@@ -23,7 +23,7 @@ public final class NamesCheck {
         for (String line : Files.readAllLines(Path.of(args[0]))) {
             Matcher m = LINE.matcher(line.replace("\uFEFF", ""));
             if (!m.matches()) continue;
-            if (names.observe(m.group(2), m.group(3))) {
+            if (names.observe(m.group(2), m.group(3), Double.parseDouble(m.group(1)))) {
                 System.out.printf("%7ss  %s   after: [%s] %s%n", m.group(1), names.roster(), m.group(2), m.group(3));
             }
         }

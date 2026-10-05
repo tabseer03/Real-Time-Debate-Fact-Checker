@@ -47,8 +47,19 @@ fact-checked. **Target: < 5 s from a claim being spoken to its verdict on screen
   Skip) and answers {"type":"speaker-name","speaker","name","moderator"}. Tested with a script
   acting as the extension against the real server (prompts at the right moments, names used in
   later claims). The card itself has never been run in Chrome — check it first.
-- **Open: rewriting faithfulness.** Still the weak point after names (see "Rewriting known
-  limits"). Fix before milestone 4.
+- Rewriting check ✅ (2026-10-05): every LLM rewrite is compared with the sentence
+  (`claims/ClaimChecker`); a rewrite that fails is replaced by the speaker's own words and the claim
+  is sent with `"rewritten": false`. Claims also carry `speakerName`. Verified by Replay on
+  session-d5ca3d24 and session-374fafcc; not yet run live.
+- Second debate ✅ first look (2026-10-05): session-277ce87c, 7.7 min of the 2012 Obama–Romney town
+  hall (Candy Crowley, an audience questioner). Voices separated correctly apart from one bogus voice
+  holding two fragments ("Good", "Mr."); the gate passed the candidates' figures; naming needed three
+  fixes (see "Names on a second debate"). Only looked at by Replay without typed names.
+- **Still open in milestone 3:** debaters' non-claims come out as claims (thanks, "Hillary Clinton
+  and Donald Trump are on the same stage tonight."); a rewrite that only rearranges the speaker's
+  words can still change the meaning; and "I" inside a story someone is quoting is pinned on the
+  speaker (Romney quoting a graduate, "I've got three part-time jobs." → "Romney has three
+  part-time jobs." — passes the check because every word was said).
 - Next: Milestone 4 (fact-checking), 5 (on-page overlay). See bottom.
 
 ## Layout
@@ -75,6 +86,7 @@ backend/              Spring Boot; pom pulls sherpa-onnx v1.13.8 from JitPack (+
   claims/ClaimRewriter       one Ollama /api/chat call per passed sentence (prompt + examples here)
   claims/ClaimPipeline       per session: gate every sentence, queue passed ones for the LLM on
                              one thread, keeps the last 4 lines (all speakers) as context
+  claims/ClaimChecker        rejects LLM rewrites that add or change things; fallback = as said
   claims/SpeakerNames        who S0/S1/S2 are; NamesCheck runs it over a saved Replay transcript
 classifier/                  Python: compare.py (feature/model comparison), finetune.py (trains the
                              gate), export_onnx.py (writes models/claim-gate/ + data/parity.tsv).
@@ -201,6 +213,27 @@ segmentation or speaker logic and compare against this.
   roads and bridges are in great shape ..."), invented detail ("650" → "$650,000"; "the report that
   said 650" → "Donald Trump's assets were worth $650 million"), and "Donald Trump stated that ..."
   wrappers around opinions.
+- **LLM rewrites are checked in code, and the fallback is the speaker's exact words.** A rewrite is
+  rejected if it adds a number or number word, denies something the sentence affirms (or the other
+  way round: the first real word after "not/no/never" is compared), drops if / when / unless / maybe /
+  probably / would / could / might / should, uses any word that is in neither the sentence, the
+  names, nor the 4 context lines, takes more than 4 words from the context lines, or keeps under
+  half of the sentence's content words. It compares words, not meaning: strict on purpose (a
+  rejected rewrite costs nothing but the name resolution; a wrong claim gets fact-checked as if it
+  had been said). Results: d5ca3d24 — 20 of 35 rewrites kept; 374fafcc — 15 of 25. Caught: "650" →
+  "$650,000", both roads-and-bridges reversals, "... due to other countries devaluing their
+  currencies". Rejected though fine: irregular verbs ("built" vs "building", "made" vs "making")
+  and any sentence starting "When ...". On session-277ce87c 22 of 50 were kept, and two bad ones
+  got through by only rearranging what was said: "President Romney is a 20-year-old college
+  student ..." (the questioner's "President, Governor Romney, as a 20-year-old college student
+  ...") and "The President said he should take Detroit bankrupt." Gets through: "New jobs will come from advanced
+  manufacturing, innovation, technology, clean renewable energy, and small business." (said: most
+  new jobs will come from small business). Latency unchanged (the check is microseconds).
+- **Tried and dropped: having the LLM list word substitutions** ("They" → "American jobs") for the
+  backend to apply, so no other word could change. gemma3:4b cannot do it: "Hillary Clinton know
+  the IRS has made clear the IRS is no prohibition ...", "When you have Hillary Clinton setting up
+  the illegal server". Its sentence-kind label (claim / opinion / procedure / fragment) was also
+  unreliable ("I have a great company." = fragment), so it is not used as a filter.
 - **Speaker names come from addresses, not from the LLM** (deterministic, no GPU time). "Mr.
   Trump?" followed by another voice saying ≥ 12 words = that voice is Trump (12 words because a
   new speaker's first short line often lands on a known voice). Saying a name counts against being
@@ -208,6 +241,15 @@ segmentation or speaker logic and compare against this.
   kept while its score stays ≥ 1 (one stitched-in "Mr. Trump," un-named Trump before that). A voice
   that hands the floor to two different people is "the moderator". An address is a title + surname
   in the first words, the last words, or between commas.
+- **Names on a second debate** (session-277ce87c) broke three ways, all fixed: "Mr. President" was
+  read as surname "President" (now an office: it means the one person heard as "President X", else
+  nothing); "President Barack Obama" gave surname "Barack" (a title may be followed by two names,
+  which also gives the full name for display); and the audience member's "Governor Romney, as a
+  20-year-old ..." was counted as Romney answering the moderator (whoever says the name in their
+  reply is not the addressee). Sentences also arrive out of order across voices, which cancelled a
+  pending address: the addresser only "takes the floor back" with a sentence that starts after the
+  reply did. A misheard address ("Mr. Romley") then loses to the real name. Result: Mitt Romney at
+  126 s, Barack Obama at 256 s, moderator at 405 s; the four Trump–Clinton transcripts unchanged.
 - **Title use:** "Mr. Trump" becomes "Donald Trump" if the title has it; and if the title pairs a
   named person with one other name ("Hillary Clinton And Donald Trump"), the other name goes to the
   single remaining voice with ≥ 100 words that has not handed the floor to anyone or said that
@@ -219,10 +261,16 @@ segmentation or speaker logic and compare against this.
   worked out to have that surname. The automatic rules stay as the fallback for skipped voices.
   A voice is announced after 6 words, not at its first sentence, so the user has something to
   recognise and a stray fragment on a bogus voice never asks.
-- **Moderator sentences are rewritten like anyone else's.** Skipping them was tried and undone the
-  same day: live (session-374fafcc) it dropped "There's been a record six straight years of job
-  growth ..." and "nearly half of Americans are living paycheck to paycheck". Procedural lines
-  ("This is Secretary Clinton's two minutes, please.") therefore still come out as claims.
+- **A moderator's sentence is a claim only if P(check-worthy) ≥ 0.5** (user, after the second
+  debate: housekeeping was being shown as claims); otherwise it is labelled JUNK. Debaters keep the
+  ordinary gate (P(factual) ≥ 0.0506). On the moderators' 32 passed sentences in five transcripts
+  this keeps 13 — 11 real ("40% of the unemployed have been unemployed for six months or more",
+  "you have not released your tax returns") and 2 housekeeping ("The Gallup organization chose 82
+  uncommitted voters ...") — and drops 19, all housekeeping ("I'm Candy Crowley from CNN State of
+  the Union.", "You have up to two minutes."). The same threshold on debaters would drop 154 of
+  245, so it is moderators only. History: skipping moderators entirely lost the job-growth
+  statistics; treating them like debaters showed the housekeeping. Only applies once the voice is
+  known to be a moderator (typed on the card, or worked out).
 - **Names results** (`claims.NamesCheck`, same debate): 18-min run — Clinton at 25 s, Trump and
   moderator at 159 s; session-c51d98d5 — Trump 16 s, all three 121 s; session-d5ca3d24 — Trump (and
   with the title, Clinton) at 144 s. No wrong name and no change after assignment in any of them.

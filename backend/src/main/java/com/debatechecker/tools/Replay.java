@@ -59,8 +59,9 @@ public final class Replay {
 
             @Override
             public void claim(ClaimPipeline.Claim c) {
-                System.out.printf("%6.1fs-%5.1fs  [%s]  CLAIM            %s%s%n",
-                        c.sentence().audioStartSec(), c.sentence().audioEndSec(), c.sentence().speaker(), c.claim(),
+                System.out.printf("%6.1fs-%5.1fs  [%s]  %-16s %s%s%n",
+                        c.sentence().audioStartSec(), c.sentence().audioEndSec(), c.sentence().speaker(),
+                        c.rewritten() ? "CLAIM" : "CLAIM (as said)", c.claim(),
                         realtime ? "   (latency " + c.latencyMs() + " ms)" : "");
             }
 

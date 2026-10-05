@@ -160,11 +160,14 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
     }
 
     private void sendClaim(String id, WebSocketSession out, ClaimPipeline.Claim c) {
-        log.info("[{}] CLAIM [{}] ({} ms) {}", id, c.sentence().speaker(), c.latencyMs(), c.claim());
+        log.info("[{}] CLAIM{} [{}] ({} ms) {}", id, c.rewritten() ? "" : " (as said)", c.sentence().speaker(),
+                c.latencyMs(), c.claim());
         Map<String, Object> msg = new LinkedHashMap<>();
         msg.put("type", "claim");
         msg.put("speaker", c.sentence().speaker());
         msg.put("claim", c.claim());
+        msg.put("rewritten", c.rewritten());
+        msg.put("speakerName", c.speakerName());
         msg.put("sentence", c.sentence().text());
         msg.put("start", c.sentence().audioStartSec());
         msg.put("end", c.sentence().audioEndSec());

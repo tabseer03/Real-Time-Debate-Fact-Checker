@@ -30,12 +30,21 @@ final class SpeakerNames {
     private static final String MODERATOR_SUFFIX = " (moderator)";
     private static final int MAX_NAME_LENGTH = 60;
 
-    private static final String HONORIFIC = "(?:Mr|Mrs|Ms|Miss|Dr|Secretary|Senator|Governor|President"
+    private static final String HONORIFIC = "(?:Mr|Mrs|Ms|Miss|Madam|Dr|Secretary|Senator|Governor|President"
             + "|Vice President|Congressman|Congresswoman|Mayor|Speaker|Prime Minister|Minister|Professor"
             + "|Judge|General|Ambassador|Chancellor)";
+    private static final String NAME = "[A-Z][a-z]+(?:-[A-Z][a-z]+)?";
+    /** A title, a capitalised word, and maybe a second one: "Mr. Trump", "President Barack Obama". */
     private static final Pattern MENTION =
-            Pattern.compile("\\b(" + HONORIFIC + ")\\.? ([A-Z][a-z]+(?:-[A-Z][a-z]+)?)\\b");
+            Pattern.compile("\\b(" + HONORIFIC + ")\\.? (" + NAME + ")(?: (" + NAME + "))?\\b");
     private static final Set<String> ABBREVIATED = Set.of("Mr", "Mrs", "Ms", "Dr");
+    /** After "Mr." or "Madam" these are an office, not a surname: "Mr. President", "Madam Secretary". */
+    private static final Set<String> OFFICES = Set.of("President", "Secretary", "Senator", "Governor", "Speaker",
+            "Mayor", "Congressman", "Congresswoman", "Chairman", "Ambassador", "Minister", "Chancellor", "Vice");
+    /** Capitalised words that follow a surname without being part of the name ("Governor Romney Thank you"). */
+    private static final Set<String> NOT_A_SURNAME = Set.of("And", "But", "The", "We", "You", "He", "She", "It",
+            "Thank", "Thanks", "Well", "So", "Now", "What", "Why", "How", "When", "That", "This", "They", "Let",
+            "Please", "If", "Is", "Are", "Was", "Has", "Have", "Will", "Would", "Said", "Says");
     /** Words in a title that can sit before a surname without being a first name. */
     private static final Set<String> NOT_A_FIRST_NAME =
             Set.of("And", "Vs", "Versus", "The", "With", "Between", "Debate", "Full", "Live", "Watch");
@@ -59,6 +68,10 @@ final class SpeakerNames {
     private final Map<String, Set<String>> gaveFloorTo = new HashMap<>();
     /** surname -> "Mr. Trump" / "Secretary Clinton" -> count */
     private final Map<String, Map<String, Integer>> forms = new HashMap<>();
+    /** surname -> "Barack Obama", when the debate itself said the whole name */
+    private final Map<String, String> fullNames = new HashMap<>();
+    /** office -> surnames heard with it ("President" -> Obama), to work out who "Mr. President" is */
+    private final Map<String, Set<String>> holders = new HashMap<>();
     private final Map<String, Integer> wordsSpoken = new HashMap<>();
     /** voice -> surname, or MODERATOR */
     private Map<String, String> assigned = new LinkedHashMap<>();
@@ -67,10 +80,13 @@ final class SpeakerNames {
     private String title = "";
     /** voice -> what the user typed for it (already formatted for display) */
     private final Map<String, String> byUser = new HashMap<>();
+    private final Set<String> moderatorsByUser = new HashSet<>();
 
     private String pendingFrom;
     private String pendingName;
     private final Map<String, Integer> pendingWords = new HashMap<>();
+    /** Where in the audio the first reply to the pending address started. */
+    private double pendingReplyStart;
 
     synchronized void setTitle(String title) {
         this.title = title == null ? "" : title;
@@ -83,6 +99,7 @@ final class SpeakerNames {
     synchronized void setByUser(String speaker, String name, boolean moderator) {
         String n = name == null ? "" : name.replaceAll("\\s+", " ").trim();
         if (n.length() > MAX_NAME_LENGTH) n = n.substring(0, MAX_NAME_LENGTH).trim();
+        if (moderator) moderatorsByUser.add(speaker); else moderatorsByUser.remove(speaker);
         if (n.isEmpty() && !moderator) {
             byUser.remove(speaker);
         } else {
@@ -94,17 +111,43 @@ final class SpeakerNames {
         return byUser.containsKey(speaker);
     }
 
-    /** @return true if the names changed */
-    synchronized boolean observe(String speaker, String text) {
+    /** Marked as a moderator by the user, or worked out to be one. The user's answer wins. */
+    synchronized boolean isModerator(String speaker) {
+        if (byUser.containsKey(speaker)) return moderatorsByUser.contains(speaker);
+        return MODERATOR.equals(assigned.get(speaker));
+    }
+
+    /**
+     * @param audioStartSec where the sentence starts in the audio; sentences from different voices
+     *                      can arrive slightly out of order
+     * @return true if the names changed
+     */
+    synchronized boolean observe(String speaker, String text, double audioStartSec) {
         Map<String, String> rosterBefore = roster();
         wordsSpoken.merge(speaker, words(text), Integer::sum);
         String addressed = null;
+        Set<String> saidHere = new HashSet<>();
         Matcher m = MENTION.matcher(text);
         while (m.find()) {
-            String surname = m.group(2);
-            count(mentioned, speaker, surname);
             String honorific = m.group(1);
-            count(forms, surname, honorific + (ABBREVIATED.contains(honorific) ? ". " : " ") + surname);
+            String surname = m.group(2);
+            if (OFFICES.contains(surname)) {
+                // "Mr. President": only a name if exactly one person has been called President ...
+                Set<String> known = holders.getOrDefault(surname, Set.of());
+                if (known.size() != 1) continue;
+                surname = known.iterator().next();
+            } else {
+                if (m.group(3) != null && !NOT_A_SURNAME.contains(m.group(3)) && !OFFICES.contains(m.group(3))) {
+                    surname = m.group(3);       // "President Barack Obama"
+                    fullNames.put(surname, m.group(2) + " " + surname);
+                }
+                if (!ABBREVIATED.contains(honorific)) {
+                    holders.computeIfAbsent(honorific, k -> new HashSet<>()).add(surname);
+                }
+                count(forms, surname, honorific + (ABBREVIATED.contains(honorific) ? ". " : " ") + surname);
+            }
+            count(mentioned, speaker, surname);
+            saidHere.add(surname);
             // Addressing someone puts their name at the start or the end of the sentence, or
             // between commas ("Beginning with you, Secretary Clinton, why are you ...").
             String head = text.substring(0, m.start()).trim();
@@ -114,15 +157,23 @@ final class SpeakerNames {
             if (before <= 2 || after <= 1 || (head.endsWith(",") && tail.startsWith(","))) addressed = surname;
         }
 
-        if (pendingFrom != null && !speaker.equals(pendingFrom)) {
+        if (pendingFrom != null && !speaker.equals(pendingFrom) && saidHere.contains(pendingName)) {
+            // Whoever says the name is not the person it belongs to: an audience member's
+            // "Governor Romney, as a 20-year-old ..." is not Romney taking the floor.
+            pendingWords.remove(speaker);
+        } else if (pendingFrom != null && !speaker.equals(pendingFrom)) {
+            if (pendingWords.isEmpty()) pendingReplyStart = audioStartSec;
             int said = pendingWords.merge(speaker, words(text), Integer::sum);
             if (said >= MIN_ANSWER_WORDS) {
                 count(answered, speaker, pendingName);
                 gaveFloorTo.computeIfAbsent(pendingFrom, k -> new HashSet<>()).add(pendingName);
                 pendingFrom = null;
             }
-        } else if (pendingFrom != null && addressed == null && !pendingWords.isEmpty()) {
-            pendingFrom = null;     // the addresser took the floor back
+        } else if (pendingFrom != null && addressed == null && !pendingWords.isEmpty()
+                && audioStartSec >= pendingReplyStart) {
+            // The addresser took the floor back. Not if this sentence is from before the reply and
+            // only arrived after it: the end of a question often lands behind "Thank you, Jeremy."
+            pendingFrom = null;
         }
         if (addressed != null) {
             pendingFrom = speaker;
@@ -254,6 +305,7 @@ final class SpeakerNames {
         while (m.find()) {
             if (!NOT_A_FIRST_NAME.contains(m.group(1))) return m.group();
         }
+        if (fullNames.containsKey(surname)) return fullNames.get(surname);
         Map<String, Integer> seen = forms.getOrDefault(surname, Map.of());
         return seen.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(surname);
     }

@@ -83,7 +83,7 @@ async function start({ streamId, tabId: id, tabUrl, tabTitle }) {
     if (msg.type === 'sentence') {
       console.log(`[${msg.speaker}] (${msg.latencyMs} ms) ${msg.category} ${msg.text}`);
     } else if (msg.type === 'claim') {
-      console.log(`[${msg.speaker}] (${msg.latencyMs} ms) CLAIM ${msg.claim}`);
+      console.log(`[${msg.speaker}] (${msg.latencyMs} ms) ${msg.rewritten ? 'CLAIM' : 'CLAIM (as said)'} ${msg.claim}`);
     } else if (msg.type === 'speakers') {
       console.log('SPEAKERS ' + Object.entries(msg.names).map(([label, name]) => `${label} = ${name}`).join(', '));
     } else if (msg.type === 'new-speaker') {
