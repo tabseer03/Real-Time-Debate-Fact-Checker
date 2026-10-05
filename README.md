@@ -1,20 +1,224 @@
-# Debate Fact Checker
+# Real-Time Debate Fact Checker
 
-Milestone 1 (done): tab audio streams to the Java backend in real time.
-**Milestone 2 (this version, v2.2): speaker-labeled sentences, using only free local models.**
+A Chrome extension and a Java backend that listen to a YouTube debate while it plays, work out who
+is speaking, and pick out the factual claims worth checking. Everything runs on your own machine
+with free, open models: no paid APIs.
+
+What it does today:
+
+- **Transcribes each speaker separately**, sentence by sentence, about 2 seconds behind the video.
+- **Names the speakers.** A card on the YouTube page asks who each new voice is; for voices you
+  skip, names are worked out from how people are addressed ("Mr. Trump?", "Secretary Clinton, ...").
+- **Labels every sentence** `FACT_CLAIM`, `OPINION` or `JUNK` with a small classifier (about 7 ms).
+- **Rewrites each claim so it stands alone** ("They're going to Mexico." → "American jobs are
+  fleeing to Mexico.") with a local LLM, and checks the rewrite against what was actually said.
+
+Not built yet: the fact-check verdicts themselves and the on-page display of results (see
+[Roadmap](#roadmap)). For now the output appears in the extension's console and the backend log.
+
+## How it works
 
 ```
-YouTube tab ─▶ extension (16 kHz PCM, 100 ms chunks) ─▶ WebSocket ─▶ Spring Boot
-   SessionPipeline (one virtual thread per tab)
-     SpeechSegmenter ── Silero speech probability; cut at 0.3 s pauses, hard cap 5 s
-     TitaNet fingerprints on 1 s windows every 0.25 s ── split where the voice changes
-     Parakeet TDT 0.6B ── speech-to-text with word timestamps; words go to each speaker part
-     SpeakerTracker ── "same voice as S0?" (cosine ≥ 0.45), else a new speaker
-   SpeakerWorker (one virtual thread per speaker) ── stitches parts into sentences
- ─▶ JSON back to the extension, logged in the offscreen console
+YouTube tab ─▶ extension (16 kHz PCM, 100 ms chunks) ─▶ WebSocket ─▶ Spring Boot backend
+
+ speech/   SessionPipeline (one virtual thread per tab)
+             SpeechSegmenter ── Silero speech probability; cut at 0.3 s pauses, hard cap 5 s
+             TitaNet fingerprints on 1 s windows every 0.25 s ── split where the voice changes
+             Parakeet TDT 0.6B ── speech-to-text with word timestamps
+             SpeakerTracker ── "same voice as S0?" (cosine ≥ 0.45), else a new speaker
+           SpeakerWorker (one virtual thread per speaker) ── stitches parts into sentences
+
+ claims/   ClaimPipeline (per tab)
+             ClaimGate ── fine-tuned MiniLM classifier: is this sentence factual at all?
+             SpeakerNames ── who S0, S1, ... are
+             ClaimRewriter ── gemma3:4b in Ollama rewrites passed sentences (GPU, own thread)
+             ClaimChecker ── rejects rewrites that add or change things; falls back to the
+                             speaker's own words
+
+ ─▶ JSON back to the extension: sentences, claims, speaker names, "who is this?" prompts
 ```
 
-## What changed in v2.2 (after the second live test, on the real Trump–Clinton debate)
+Speech models run on the CPU. The LLM runs entirely on the GPU, so the two do not compete.
+
+## Requirements
+
+- Windows 10/11, x64. (The speech library's native files in `backend/pom.xml` are the Windows
+  ones; the comment there names the Linux and macOS equivalents.)
+- JDK 21 or newer, and Maven (IntelliJ's bundled Maven is enough).
+- Chrome.
+- [Ollama](https://ollama.com), and an NVIDIA GPU with 4 GB of memory for `gemma3:4b`.
+- Python 3.12, only to build the claim classifier once.
+
+Developed on a Ryzen 5 5600H, 16 GB RAM, RTX 3050 4 GB.
+
+## Setup
+
+Run every command from the project folder (the one containing `backend`, `extension`, `models`).
+
+### 1. Speech models
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\download-models.ps1
+```
+
+This fetches `models\silero_vad.onnx`, `models\nemo_en_titanet_small.onnx` and
+`models\sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8\` (several hundred MB). It skips files you
+already have.
+
+### 2. Claim classifier
+
+The classifier is trained on the [ClaimBuster dataset](https://zenodo.org/records/3609356)
+(CC BY 4.0), about 23,000 sentences from US presidential debates. It is not downloadable ready-made,
+so build it once:
+
+```powershell
+New-Item -ItemType Directory -Force classifier\data | Out-Null
+foreach ($f in 'crowdsourced.csv','groundtruth.csv') {
+    Invoke-WebRequest "https://zenodo.org/api/records/3609356/files/$f/content" -OutFile "classifier\data\$f"
+}
+
+python -m venv classifier\.venv
+classifier\.venv\Scripts\python -m pip install torch --index-url https://download.pytorch.org/whl/cu126
+classifier\.venv\Scripts\python -m pip install transformers pandas scikit-learn onnx onnxruntime
+
+classifier\.venv\Scripts\python classifier\finetune.py
+classifier\.venv\Scripts\python classifier\export_onnx.py
+```
+
+Training takes about 3 minutes on the RTX 3050 and about 45 minutes on a CPU (leave out the
+`--index-url` part to install the CPU build of PyTorch). The result is `models\claim-gate\`
+(`gate.onnx`, `vocab.txt`, `gate.json`). The backend will not start without it.
+
+### 3. LLM
+
+Install Ollama, keep it running (the llama icon in the system tray), and fetch the model once:
+
+```powershell
+ollama pull gemma3:4b
+```
+
+Without Ollama the backend still starts and classifies sentences; it logs
+`Claim rewriting is off` and sends no claims.
+
+### 4. Backend
+
+In IntelliJ, run `DebateCheckerApplication` with the working directory set to the project folder.
+Or from a terminal, with the full path to the project folder:
+
+```powershell
+mvn -f backend/pom.xml spring-boot:run "-Dspring-boot.run.workingDirectory=C:\path\to\project"
+```
+
+It is ready when the log shows `Started DebateCheckerApplication` and
+`LLM gemma3:4b loaded, 100% on the GPU`.
+
+### 5. Extension
+
+`chrome://extensions` → turn on *Developer mode* → *Load unpacked* → choose the `extension` folder.
+Reload it there after any change to its files.
+
+## Using it
+
+1. Open a debate on YouTube and click the extension icon. The badge shows `ON`.
+2. When a new voice has said a few words, a card appears at the top right of the page with a quote
+   of what it said. Type the name, tick *Moderator* if it is one, and press *Save* (or *Skip*).
+3. Watch the output: `chrome://extensions` → this extension → *Inspect views: offscreen.html* →
+   *Console*.
+4. Click the icon again to stop.
+
+```
+NEW SPEAKER S2: Thank you, Lester. Our jobs are fleeing the country.
+SPEAKERS S0 = Lester Holt (moderator), S1 = Hillary Clinton, S2 = Donald Trump
+[S2] (1390 ms) FACT_CLAIM They're going to Mexico.
+[S2] (2821 ms) CLAIM American jobs are fleeing to Mexico.
+[S2] (1872 ms) OPINION You look at what China is doing to our country in terms of making our product.
+[S2] (2537 ms) CLAIM (as said) When you look at what's happening in Mexico, a friend of mine ...
+```
+
+The number in brackets is the delay from the end of that speech to the line being ready.
+`CLAIM (as said)` means the LLM's rewrite failed the check and the speaker's own words are used.
+
+The backend sends these messages over the WebSocket (`ws://localhost:8080/audio`):
+
+| `type` | Fields | When |
+|---|---|---|
+| `sentence` | `speaker`, `text`, `start`, `end`, `latencyMs`, `category`, `factual` | every finished sentence |
+| `claim` | `speaker`, `speakerName`, `claim`, `rewritten`, `sentence`, `start`, `end`, `latencyMs` | each `FACT_CLAIM`, about a second later |
+| `speakers` | `names` (label → name) | whenever a name is learned or typed |
+| `new-speaker` | `speaker`, `text`, `guess` | a voice not heard before has said 6 words |
+
+The extension answers a `new-speaker` message with
+`{"type":"speaker-name","speaker":"S2","name":"Donald Trump","moderator":false}`.
+
+## Replay: tune without replaying YouTube
+
+Every live session is saved to `recordings\session-<id>.wav`. Run one back through the same
+pipeline, as fast as the machine allows:
+
+```powershell
+mvn -f backend/pom.xml -q compile exec:java "-Dexec.mainClass=com.debatechecker.tools.Replay" "-Dexec.args=recordings/session-XXXX.wav 0.45"
+```
+
+Add to the arguments:
+
+- `--realtime` to feed the audio at playback speed and print each line's latency.
+- `--name=S2=Donald_Trump` or `--name=S0=Lester_Holt,moderator` to name a voice as you would on the
+  card (underscores for spaces).
+- `--title=Some_Video_Title` to pass the tab title.
+
+In IntelliJ: open `backend/src/main/java/com/debatechecker/tools/Replay.java`, press the green ▶
+next to `main`, then *Edit Configurations* → program arguments as above, working directory = the
+project folder.
+
+Two smaller tools check one part each: `claims.GateCheck` compares the Java classifier with the
+Python one, and `claims.NamesCheck` runs the speaker naming over a saved Replay transcript.
+
+## Results so far
+
+Measured on recordings of two debates (2016 Trump–Clinton, 2012 Obama–Romney town hall), replayed
+at real-time speed:
+
+| | Typical | Notes |
+|---|---|---|
+| Sentence delay | median about 2 s | 10–14% of sentences take over 5 s, mostly at speaker changes |
+| Claim delay | median about 3 s | rewriting adds about 1 s |
+| Claim classifier | keeps 94% of check-worthy sentences, passes 57% of all sentences | held-out 2016 debates from ClaimBuster |
+| Rewrites that pass the check | 45–60% | the rest are sent as said |
+
+## Known limits
+
+- **Crosstalk and interruptions.** Overlapping speech gives fragments; a line under about 1 second
+  ("No.", "Mr. Trump.") goes to whoever is speaking around it; a new speaker's first few words can
+  land on a voice that is already known.
+- **Rewrites can still be wrong.** The check compares words, not meaning, so a rewrite that only
+  rearranges the speaker's words gets through. "I" inside a story someone is quoting is pinned on
+  the person telling it.
+- **Not everything labelled a claim is one.** Thanks and pleasantries from debaters still come out
+  as claims. A moderator's housekeeping is filtered once the voice is marked as a moderator.
+- **Speaker labels are per session.** S0 in one run may be S1 in the next.
+- **English only**, and tested on two US presidential debates.
+
+## Tuning (`backend/src/main/resources/application.properties`)
+
+| What you see | Change |
+|---|---|
+| One person split into S0, S2, S3… | lower `speaker-threshold` (0.4, 0.35) |
+| Two people merged into one label | raise `speaker-threshold` (0.5, 0.55) |
+| `asr` times over ~1500 ms in the log | raise `asr-threads` to 6 |
+| Sentences chopped mid-thought | raise `vad-min-silence-seconds` to 0.4 |
+| A different LLM | `llm-model` (and `ollama pull` it) |
+
+The reasons behind the design choices, with the measurements, are in [CLAUDE.md](CLAUDE.md).
+
+## Roadmap
+
+- **Fact-checking.** Google Fact Check Tools API first, then Wikipedia/Wikidata, then an LLM verdict
+  (true / false / misleading / unverifiable) with sources. Free sources only.
+- **On-page overlay.** Speaker, claim, verdict and sources shown on the YouTube page.
+
+## History of the speech pipeline
+
+### v2.2 (after the second live test, on the real Trump–Clinton debate)
 
 | Problem seen in the live log | Fix |
 |---|---|
@@ -25,11 +229,7 @@ YouTube tab ─▶ extension (16 kHz PCM, 100 ms chunks) ─▶ WebSocket ─▶
 | Misheard words at cuts ("into a company" → "in 2015"), duplicates | Last 3 words of a cut segment are re-transcribed in the next one, keeping their speaker |
 | Occasional empty transcript | Retry with 0.3 s, then 0.6 s silence padding (fixed 120/120 random cuts) |
 
-Two synthetic test debates (3 voices, one with TV-style band-limiting, compression, hum, short
-interjections and interruptions): every sentence correctly attributed except one 0.6 s "Yes.",
-identical results for thresholds 0.35–0.55.
-
-## What changed in v2.1 (after the first live test)
+### v2.1 (after the first live test)
 
 | Problem seen in the live log | Cause | Fix |
 |---|---|---|
@@ -38,59 +238,3 @@ identical results for thresholds 0.35–0.55.
 | Trump and Clinton merged into S0 | CAM++ fingerprints: different voices scored up to 0.93 | Tested 7 free models; **TitaNet-small**: same voice ≥ 0.72, different ≤ 0.19 |
 | Words cut in half / lost at forced cuts | Cut lands mid-word | Last word of a cut segment is carried into the next; repeats removed |
 | `with$14 million` | ASR spacing quirk | Text tidy-up |
-
-On a synthetic 3-voice debate (moderator + two debaters, handoffs with 0.1–0.15 s gaps), every
-sentence gets the right speaker for any threshold from 0.3 to 0.6, and sentence latency is mostly
-1.2–3 s. Real broadcast audio is harder; use the replay tool below to check yours.
-
-## Setup
-
-1. **Get the new speaker model.** Re-run from the `debate-checker` folder (it skips files you already have):
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\download-models.ps1
-   ```
-   You need: `models\silero_vad.onnx`, `models\nemo_en_titanet_small.onnx`,
-   `models\sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8\` (encoder/decoder/joiner `.int8.onnx` + `tokens.txt`).
-   The old `3dspeaker_speech_campplus...onnx` can be deleted.
-2. Run `DebateCheckerApplication` with the working directory set to the `debate-checker` folder.
-3. Reload the extension on `chrome://extensions`.
-
-## Live test
-
-Backend log, one block per segment, then finished sentences:
-```
-[a1b2c3d4] segment 16.1-20.5s (cut): 2 part(s), speaker 88ms, asr 926ms
-      S1 16.1-19.0s (-0.01 NEW): Secretary, would you like to respond?
-      S2 19.0-20.5s (0.11 NEW): Well, I think trade is an
-[a1b2c3d4] SENTENCE [S1] (1243 ms) Secretary, would you like to respond?
-```
-`(cut)` = the segment hit the 5 s cap. The number after each part is its similarity to the
-speaker it was matched with (`NEW` = no match, new label). `SENTENCE (… ms)` = time from the end
-of that speech to the sentence being ready.
-
-Sentences also show up in Chrome: `chrome://extensions` → this extension → *Inspect views: offscreen.html* → Console.
-
-## Replay tool: tune without replaying YouTube
-
-Every live session is saved to `recordings\session-<id>.wav`. Run it back through the same pipeline:
-
-IntelliJ → open `backend/src/main/java/com/debatechecker/tools/Replay.java` → green ▶ next to `main`
-→ it fails once without arguments → *Edit Configurations*:
-- Program arguments: `recordings\session-e2b1228e.wav 0.45`  (add `--realtime` to measure latency)
-- Working directory: the `debate-checker` folder
-
-## Tuning (`application.properties`)
-
-| What you see | Change |
-|---|---|
-| One person split into S0, S2, S3… | lower `speaker-threshold` (0.4, 0.35) |
-| Two people merged into one label | raise `speaker-threshold` (0.5, 0.55) |
-| `asr` times over ~1500 ms | raise `asr-threads` to 6 |
-| Sentences chopped mid-thought | raise `vad-min-silence-seconds` to 0.4 |
-
-Known limits: crosstalk goes to whoever is louder; a turn under ~1 s ("Yes.", "No!") goes to a
-neighbouring speaker; labels are per session (S0 in one run may be S1 in the next).
-
-## Next: milestone 3
-Classify each sentence as FACT_CLAIM / OPINION / JUNK with a local LLM on the RTX 3050 (Ollama),
-using the speaker's recent context from `SpeakerWorker` to turn "he cut it by half" into a standalone claim.
