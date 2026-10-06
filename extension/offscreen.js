@@ -91,7 +91,8 @@ async function start({ streamId, tabId: id, tabUrl, tabTitle }) {
       for (const sp of msg.speakers) {
         console.log(`  ${sp.name} said:`);
         for (const st of sp.statements) {
-          const source = st.verdict !== 'UNVERIFIABLE' && st.sources.length ? ` — ${st.sources[0].title} ${st.sources[0].url}` : '';
+          const quote = st.quote ? `"${st.quote}" — ` : '';
+          const source = st.verdict !== 'UNVERIFIABLE' && st.sources.length ? ` — ${quote}${st.sources[0].title} ${st.sources[0].url}` : '';
           console.log(`    [${st.status}] ${st.claim}${source}`);
         }
       }

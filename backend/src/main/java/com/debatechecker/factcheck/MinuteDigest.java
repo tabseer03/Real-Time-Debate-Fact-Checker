@@ -4,6 +4,8 @@ import com.debatechecker.claims.ClaimPipeline;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -34,8 +36,15 @@ public final class MinuteDigest implements AutoCloseable {
      */
     private static final double GRACE_SECONDS = 10;
     private static final int MAX_CHECK_SECONDS = 20;
+    /** The judge's one request for the minute is given this long by its own timeout. */
+    private static final int MAX_JUDGE_SECONDS = 25;
 
-    public record Statement(ClaimPipeline.Claim claim, FactChecker.Result result) {}
+    /**
+     * @param quote  for a verdict the judge reached from a passage: the words it rests on (they are
+     *               in {@code result.sources().get(0)}); "" otherwise
+     * @param reason the judge's one sentence for the viewer, or ""
+     */
+    public record Statement(ClaimPipeline.Claim claim, FactChecker.Result result, String quote, String reason) {}
 
     /**
      * @param speakers one entry per speaker who made a claim, in the order they first spoke
@@ -52,6 +61,8 @@ public final class MinuteDigest implements AutoCloseable {
 
     private final String sessionId;
     private final FactChecker checker;
+    private final GeminiJudge judge;
+    private final LocalDate debateDay;
     private final int windowSeconds;
     private final Listener listener;
     private final List<ClaimPipeline.Claim> waiting = new ArrayList<>();
@@ -61,8 +72,19 @@ public final class MinuteDigest implements AutoCloseable {
     private double heardUpTo;
 
     public MinuteDigest(String sessionId, FactChecker checker, int windowSeconds, Listener listener) {
+        this(sessionId, checker, null, null, windowSeconds, listener);
+    }
+
+    /**
+     * @param judge     reads the web passages of claims no fact-checker has rated; null for no judge
+     * @param debateDay when the debate took place; null for today (a live debate)
+     */
+    public MinuteDigest(String sessionId, FactChecker checker, GeminiJudge judge, LocalDate debateDay,
+                        int windowSeconds, Listener listener) {
         this.sessionId = sessionId;
         this.checker = checker;
+        this.judge = judge != null && judge.enabled() ? judge : null;
+        this.debateDay = debateDay;
         this.windowSeconds = windowSeconds;
         this.listener = listener;
     }
@@ -160,18 +182,73 @@ public final class MinuteDigest implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+        for (int i = 0; i < results.length; i++) {
+            if (results[i] == null) {
+                results[i] = new FactChecker.Result(FactChecker.Verdict.UNVERIFIABLE, "", List.of(), false, 0);
+            }
+        }
+        GeminiJudge.Ruling[] rulings = judge(from, to, claims, results);
         Map<String, List<Statement>> bySpeaker = new LinkedHashMap<>();
         Map<String, String> names = new LinkedHashMap<>();
         for (int i = 0; i < claims.size(); i++) {
             ClaimPipeline.Claim c = claims.get(i);
-            FactChecker.Result r = results[i] != null ? results[i]
-                    : new FactChecker.Result(FactChecker.Verdict.UNVERIFIABLE, "", List.of(), false, 0);
-            bySpeaker.computeIfAbsent(c.sentence().speaker(), k -> new ArrayList<>()).add(new Statement(c, r));
+            FactChecker.Result r = results[i];
+            Statement statement = new Statement(c, r, "", "");
+            if (rulings[i] != null) {
+                // The passage the verdict rests on goes first, where a fact-checker's review would be.
+                List<Evidence> sources = new ArrayList<>(r.sources());
+                sources.remove(rulings[i].source());
+                sources.add(0, rulings[i].source());
+                statement = new Statement(c, new FactChecker.Result(rulings[i].verdict(), "", sources, r.repeated(),
+                        r.tookMs()), rulings[i].quote(), rulings[i].reason());
+            }
+            bySpeaker.computeIfAbsent(c.sentence().speaker(), k -> new ArrayList<>()).add(statement);
             names.put(c.sentence().speaker(), c.speakerName());     // the latest: a name may be learned mid-minute
         }
         List<Speaker> speakers = new ArrayList<>();
         bySpeaker.forEach((label, statements) -> speakers.add(new Speaker(label, names.get(label), statements)));
         return new Digest(from, to, speakers);
+    }
+
+    /**
+     * One request for the whole minute: every claim no fact-checker has rated, with the web
+     * passages found for it. Whatever goes wrong, those claims just stay "could not be verified".
+     */
+    private GeminiJudge.Ruling[] judge(double from, double to, List<ClaimPipeline.Claim> claims,
+                                       FactChecker.Result[] results) {
+        GeminiJudge.Ruling[] rulings = new GeminiJudge.Ruling[claims.size()];
+        if (judge == null) return rulings;
+        List<Integer> asked = new ArrayList<>();
+        List<GeminiJudge.Case> cases = new ArrayList<>();
+        for (int i = 0; i < claims.size(); i++) {
+            FactChecker.Result r = results[i];
+            // Wikipedia passages are picked by shared words and were never good enough to judge from.
+            boolean webPassages = !r.sources().isEmpty()
+                    && r.sources().stream().allMatch(e -> e.source().equals(ExaEvidence.SOURCE));
+            if (r.verdict() != FactChecker.Verdict.UNVERIFIABLE || !webPassages) continue;
+            ClaimPipeline.Claim c = claims.get(i);
+            asked.add(i);
+            // A voice without a name yet is "S2", which tells the judge nothing.
+            String speaker = c.speakerName().matches("S\\d+") ? "" : c.speakerName();
+            cases.add(new GeminiJudge.Case(speaker, c.claim(), r.sources()));
+        }
+        if (cases.isEmpty()) return rulings;
+        long start = System.nanoTime();
+        try {
+            List<GeminiJudge.Ruling> answers = judge.judge(debateDay != null ? debateDay : LocalDate.now(), cases);
+            int given = 0;
+            for (int k = 0; k < asked.size(); k++) {
+                rulings[asked.get(k)] = answers.get(k);
+                if (answers.get(k) != null) given++;
+            }
+            log.info("[{}] judge: {} verdicts for {} claims of {}-{} s in {} ms", sessionId, given, cases.size(),
+                    (int) from, (int) to, (System.nanoTime() - start) / 1_000_000);
+        } catch (IOException e) {
+            log.warn("[{}] no judge for {}-{} s: {}", sessionId, (int) from, (int) to, e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return rulings;
     }
 
     /** What a verdict is called in the report. */
@@ -194,7 +271,8 @@ public final class MinuteDigest implements AutoCloseable {
             for (Statement st : s.statements()) {
                 FactChecker.Result r = st.result();
                 String source = r.verdict() == FactChecker.Verdict.UNVERIFIABLE || r.sources().isEmpty() ? ""
-                        : " — " + r.sources().get(0).title() + (r.rating().isEmpty() ? "" : ", rated \"" + r.rating() + "\"");
+                        : " — " + (st.quote().isEmpty() ? "" : "\"" + st.quote() + "\" — ") + r.sources().get(0).title()
+                        + (r.rating().isEmpty() ? "" : ", rated \"" + r.rating() + "\"");
                 out.add("    [" + status(r.verdict()) + "] " + st.claim().claim() + source);
             }
         }
@@ -210,7 +288,9 @@ public final class MinuteDigest implements AutoCloseable {
         }
         reports.shutdown();
         try {
-            if (!reports.awaitTermination(MAX_CHECK_SECONDS + 5, TimeUnit.SECONDS)) reports.shutdownNow();
+            if (!reports.awaitTermination(MAX_CHECK_SECONDS + MAX_JUDGE_SECONDS + 5, TimeUnit.SECONDS)) {
+                reports.shutdownNow();
+            }
         } catch (InterruptedException e) {
             reports.shutdownNow();
             Thread.currentThread().interrupt();

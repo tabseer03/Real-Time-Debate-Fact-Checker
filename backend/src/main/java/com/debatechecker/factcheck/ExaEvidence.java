@@ -9,9 +9,15 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -30,6 +36,9 @@ import java.util.regex.Pattern;
  */
 public final class ExaEvidence implements EvidenceSource {
 
+    /** {@link Evidence#source()} of what this finds. */
+    static final String SOURCE = "Web";
+
     private static final String API = "https://api.exa.ai/search";
     private static final int RESULTS = 5;
     private static final int MAX_PASSAGE_CHARS = 500;
@@ -37,6 +46,11 @@ public final class ExaEvidence implements EvidenceSource {
     private static final int MIN_CLAIM_WORDS = 4;
     /** With a date limit, how far back to look. */
     private static final int YEARS_BACK = 3;
+    /**
+     * Answers to searches with a date limit are kept here: what was published before a day in 2016
+     * does not change, and a replay asks the same questions every time it is run.
+     */
+    private static final Path CACHE = Path.of("cache", "exa");
     private static final Pattern SITE = Pattern.compile("^https?://(?:www\\.)?([^/:?#]+)");
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
@@ -80,6 +94,10 @@ public final class ExaEvidence implements EvidenceSource {
             body.put("startPublishedDate", before.minusYears(YEARS_BACK) + "T00:00:00.000Z");
             body.put("endPublishedDate", before + "T00:00:00.000Z");
         }
+        Path kept = before == null ? null : CACHE.resolve(sha256(body.toString()) + ".json");
+        if (kept != null && Files.isRegularFile(kept)) {
+            return passages(json.readTree(Files.readString(kept)), max, before);
+        }
         // Timed as a whole, like the Wikipedia request: the request's own timeout stops at the headers.
         CompletableFuture<HttpResponse<String>> pending = http.sendAsync(
                 HttpRequest.newBuilder(URI.create(API)).timeout(timeout)
@@ -104,7 +122,20 @@ public final class ExaEvidence implements EvidenceSource {
         }
         JsonNode root = json.readTree(response.body());
         spentDollars.add(root.path("costDollars").path("total").asDouble(0));
+        if (kept != null) {
+            Files.createDirectories(CACHE);
+            Files.writeString(kept, response.body());
+        }
         return passages(root, max, before);
+    }
+
+    private static String sha256(String text) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(text.getBytes(StandardCharsets.UTF_8))).substring(0, 32);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     /** One passage per page, in Exa's order. With a date limit, a page with no date is left out. */
@@ -119,7 +150,7 @@ public final class ExaEvidence implements EvidenceSource {
             String url = r.path("url").asText("");
             Matcher site = SITE.matcher(url);
             String title = r.path("title").asText("").trim();
-            out.add(new Evidence("Web",
+            out.add(new Evidence(SOURCE,
                     (site.find() ? site.group(1) : "") + (day.isEmpty() ? "" : ", " + day)
                             + (title.isEmpty() ? "" : ": " + title),
                     url, passage.length() > MAX_PASSAGE_CHARS ? passage.substring(0, MAX_PASSAGE_CHARS) : passage, ""));

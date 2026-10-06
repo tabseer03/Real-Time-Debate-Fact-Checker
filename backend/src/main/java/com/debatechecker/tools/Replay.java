@@ -65,7 +65,10 @@ public final class Replay {
                 before != null && exa.enabled() ? exa
                         : new WikipediaEvidence("DebateFactChecker/0.1 (personal project)", checkTimeout));
         // Once a minute of audio, as in the live server: each speaker's claims and what the check found.
-        MinuteDigest digest = new MinuteDigest("replay", checker, 60, d -> {
+        com.debatechecker.factcheck.GeminiJudge judge = new com.debatechecker.factcheck.GeminiJudge(
+                System.getenv().getOrDefault("GEMINI_API_KEY", ""), "gemini-3.5-flash-lite",
+                java.time.Duration.ofSeconds(25));
+        MinuteDigest digest = new MinuteDigest("replay", checker, judge, before, 60, d -> {
             StringBuilder block = new StringBuilder("\n   DIGEST ");
             for (String line : MinuteDigest.describe(d)) block.append(line).append("\n   ");
             System.out.println(block);

@@ -105,9 +105,31 @@ first is confirmed, the second could not be verified"). The user changed this on
   bear on it directly (AP on the tax returns, Pew "38.8% ... out of work for 27 weeks or more",
   MarketWatch on the debt nearing $20 trillion, the NYPD's murder count) — Wikipedia managed about
   5 of 16. 1.3–6.4 s a claim, $0.112 for the 16. Not run through Replay or live yet.
-- **Still no verdict:** the passages are attached and every claim is still UNVERIFIABLE. The
-  entailment model was scored on these passages and is **not good enough to be the judge** (see
-  "Entailment model on real search results" under Decisions). Open: what reads the passages.
+- **The judge ✅ first verdicts (2026-10-06, `factcheck/GeminiJudge`):** once a minute
+  `MinuteDigest` sends the claims no fact-checker has rated, with their web passages, in one
+  request to gemini-3.5-flash-lite (free tier, `GEMINI_API_KEY`, no search tool). A verdict is kept
+  only if its quote is found word for word in one of the claim's passages and its TRUE / FALSE
+  agrees with its own "agrees" answer; the digest statement then carries `quote` and `reason`, and
+  `sources[0]` is the passage quoted. Anything else, a timeout or a 429 leaves "could not be
+  verified". Verified by `FactCheckTry` and by Replay with `--before=2016-09-26`; the server boots
+  with it; **not run live** (handler's `quote` / `reason` fields, extension log line).
+  - 16 claims of `eval/claims.txt` (14 reach the judge), three runs: 9–11 verdicts, 1–2 wrong each
+    time and not always the same ones (temperature 0 does not make it repeat). Always wrong: Ford
+    moving small-car production -> "Ford is leaving and thousands of jobs are leaving" TRUE. Once:
+    "Oil production on federal land is down 14 percent this year" FALSE from another year's figure.
+  - session-c51d98d5 by Replay: 18 claims checked, 5 verdicts, 4 good ("Mr. Trump has proposed a
+    tax benefit for his family" from The Hill; "Every major party nominee since the late 1970s has
+    released tax returns" from USA Today), 1 bad ("People are leaving because taxes are too high"
+    confirmed by Americans giving up citizenship — "People" was companies). 2 s a minute.
+  - Before two rules were added the same replay gave 10 verdicts, 5 of them poor: housekeeping,
+    "trumped up trickle-down" and a prediction were "confirmed" by a passage quoting the speaker
+    or describing the debate. The rules: only a statement of fact can be checked; the debate and
+    the speaker's own earlier words are not evidence. The judge is told who said each claim.
+- **The entailment model is not the judge** (scored on the same passages, see Decisions).
+- **Open in the judge:** the free tier's daily limit for flash-lite is unknown (a debate needs
+  about 90 requests); nothing shown yet says a verdict is the model's reading and not a
+  fact-checker's rating; unresolved claims ("People are leaving ...") get matched to the wrong
+  thing; Exa's date limit leaks pages about the debate itself into replays.
 - Next: finish Milestone 4, then 5 (on-page overlay). See bottom.
 
 ## Layout
@@ -141,7 +163,10 @@ backend/              Spring Boot; pom pulls sherpa-onnx v1.13.8 from JitPack (+
   factcheck/GoogleFactCheck  claims:search; which returned review counts as "this claim" (Words)
   factcheck/WikipediaEvidence one request = search + text of 3 pages; picks passages by shared words
   factcheck/ExaEvidence      web search (exa.ai): one paid request per claim, a passage per page;
-                             optional "published before" limit for replays. EvidenceSource = either
+                             optional "published before" limit for replays (those answers are
+                             kept in cache/exa/, gitignored). EvidenceSource = either
+  factcheck/GeminiJudge      one request per minute: claims + passages -> verdict, quote, reason;
+                             drops a verdict whose quote is not in a passage
   factcheck/FactCheckTry     checks claims from a text file or the command line, no audio
   factcheck/MinuteDigest     per session: a minute's claims → FactChecker → one report by speaker
 classifier/                  Python: compare.py (feature/model comparison), finetune.py (trains the
@@ -473,6 +498,11 @@ segmentation or speaker logic and compare against this.
   is the way to preload fact-checks before a debate and match them by meaning. Not worth taking:
   the regex gate, and an LLM deciding whether a matched fact-check is the same claim (our
   tax-returns and born-in-Kenya cases are exactly that mistake). Feed not downloaded or tried yet.
+- **The judge's label comes last and is asked twice.** With "verdict" first in the JSON, flash-lite
+  answered TRUE for "Barack Obama was born in Kenya" beside its own reason "fact-checkers classify
+  the claim as false". Now the order is quote, passage, reason, `agrees` (do the quoted words say
+  the claim is right), verdict (`propertyOrdering` in the schema), and TRUE with agrees=false or
+  FALSE with agrees=true is dropped.
 - **Gemini as the judge: good with Google Search grounding, but not on the free tier** (tried
   2026-10-05 with the user's AI Studio key, Python prototypes only — nothing in the backend yet).
   The user's Google AI Pro plan is for the Gemini app and does not change API quotas.

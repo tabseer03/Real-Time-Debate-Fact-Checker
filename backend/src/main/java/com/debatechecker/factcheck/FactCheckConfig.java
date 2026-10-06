@@ -1,5 +1,6 @@
 package com.debatechecker.factcheck;
 
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -19,5 +20,17 @@ public class FactCheckConfig {
         ExaEvidence exa = new ExaEvidence(exaKey, timeout, null);
         return new FactChecker(new GoogleFactCheck(googleKey, timeout),
                 exa.enabled() ? exa : new WikipediaEvidence(userAgent, timeout));
+    }
+
+    @Bean
+    public GeminiJudge geminiJudge(@Value("${debatechecker.gemini-key}") String key,
+                                   @Value("${debatechecker.judge-model}") String model,
+                                   @Value("${debatechecker.judge-timeout-seconds}") int timeoutSeconds) {
+        GeminiJudge judge = new GeminiJudge(key, model, Duration.ofSeconds(timeoutSeconds));
+        if (!judge.enabled()) {
+            LoggerFactory.getLogger(FactCheckConfig.class).warn("No Gemini key (debatechecker.gemini-key): "
+                    + "claims without a published fact-check stay \"could not be verified\".");
+        }
+        return judge;
     }
 }

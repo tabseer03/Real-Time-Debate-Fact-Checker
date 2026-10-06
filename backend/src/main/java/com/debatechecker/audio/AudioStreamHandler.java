@@ -5,6 +5,7 @@ import com.debatechecker.claims.ClaimPipeline;
 import com.debatechecker.claims.ClaimRewriter;
 import com.debatechecker.factcheck.Evidence;
 import com.debatechecker.factcheck.FactChecker;
+import com.debatechecker.factcheck.GeminiJudge;
 import com.debatechecker.factcheck.MinuteDigest;
 import com.debatechecker.speech.Sentence;
 import com.debatechecker.speech.SessionPipeline;
@@ -48,6 +49,7 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
     private final ClaimGate gate;
     private final ClaimRewriter rewriter;
     private final FactChecker factChecker;
+    private final GeminiJudge judge;
     private final ObjectMapper json = new ObjectMapper();
     private final String recordingsDir;
     private final float speakerThreshold;
@@ -55,6 +57,7 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
     private final int digestSeconds;
 
     public AudioStreamHandler(SpeechModels models, ClaimGate gate, ClaimRewriter rewriter, FactChecker factChecker,
+                              GeminiJudge judge,
                               @Value("${debatechecker.recordings-dir}") String recordingsDir,
                               @Value("${debatechecker.speaker-threshold}") float speakerThreshold,
                               @Value("${debatechecker.max-speakers}") int maxSpeakers,
@@ -64,6 +67,7 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
         this.gate = gate;
         this.rewriter = rewriter;
         this.factChecker = factChecker;
+        this.judge = judge;
         this.recordingsDir = recordingsDir;
         this.speakerThreshold = speakerThreshold;
         this.maxSpeakers = maxSpeakers;
@@ -75,7 +79,9 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
         // Sentences arrive from several speaker threads; plain WebSocketSession isn't safe for
         // concurrent sends, the decorator serializes them.
         WebSocketSession out = new ConcurrentWebSocketSessionDecorator(ws, 5_000, 512 * 1024);
-        MinuteDigest digest = new MinuteDigest(id, factChecker, digestSeconds, d -> sendDigest(id, out, d));
+        // Live: the debate is today.
+        MinuteDigest digest = new MinuteDigest(id, factChecker, judge, null, digestSeconds,
+                d -> sendDigest(id, out, d));
         ClaimPipeline claims = new ClaimPipeline(id, gate, rewriter, new ClaimPipeline.Listener() {
             @Override
             public void sentence(Sentence sentence, ClaimGate.Result verdict) {
@@ -212,6 +218,9 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
                 s.put("verdict", r.verdict().name());
                 s.put("status", MinuteDigest.status(r.verdict()));
                 s.put("rating", r.rating());
+                // Set when the verdict was read from a web passage: the words it rests on (from sources[0]).
+                s.put("quote", st.quote());
+                s.put("reason", st.reason());
                 List<Map<String, Object>> sources = new ArrayList<>();
                 for (Evidence e : r.sources()) {
                     Map<String, Object> src = new LinkedHashMap<>();

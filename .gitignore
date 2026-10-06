@@ -3,6 +3,8 @@ models/
 eval/voices/
 # per-session audio recordings
 recordings/
+# saved answers to date-limited web searches (replays)
+cache/
 eval/*.wav
 # ClaimBuster training data and cached embeddings
 classifier/data/
