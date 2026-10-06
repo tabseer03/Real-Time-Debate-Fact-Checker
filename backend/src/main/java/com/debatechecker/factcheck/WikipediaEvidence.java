@@ -34,7 +34,7 @@ import java.util.zip.GZIPInputStream;
  * (generator=search with prop=cirrusdoc). Searching and then fetching each page was four requests,
  * and Wikipedia answered 429 "wait 37 s" after about fifteen of those.
  */
-public final class WikipediaEvidence {
+public final class WikipediaEvidence implements EvidenceSource {
 
     private static final String API = "https://en.wikipedia.org/w/api.php?action=query&generator=search"
             + "&gsrlimit=%d&prop=cirrusdoc&cdincludes=text&format=json&formatversion=2&gsrsearch=%s";
@@ -70,11 +70,8 @@ public final class WikipediaEvidence {
         this.timeout = timeout;
     }
 
-    /**
-     * @param max how many passages to return at most
-     * @return the passages most like the claim, best first; empty if nothing was found
-     * @throws IOException if Wikipedia cannot be reached or has asked us to wait
-     */
+    /** @throws IOException if Wikipedia cannot be reached or has asked us to wait */
+    @Override
     public List<Evidence> search(String claim, int max) throws IOException, InterruptedException {
         if (Words.contentSet(claim).size() < MIN_CLAIM_WORDS) return List.of();
         long waitMs = (blockedUntilNanos - System.nanoTime()) / 1_000_000;

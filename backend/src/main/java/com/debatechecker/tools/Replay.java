@@ -36,7 +36,7 @@ public final class Replay {
                 .map(a -> a.substring(8).replace('_', ' ')).findFirst().orElse("");
         String[] args = java.util.Arrays.stream(rawArgs).filter(a -> !a.startsWith("--")).toArray(String[]::new);
         if (args.length < 1) {
-            System.err.println("usage: Replay <file.wav> [speakerThreshold] [modelsDir] [--realtime] [--title=Video_Title] [--name=S0=Some_Name[,moderator]]");
+            System.err.println("usage: Replay <file.wav> [speakerThreshold] [modelsDir] [--realtime] [--title=Video_Title] [--name=S0=Some_Name[,moderator]] [--before=2016-09-26]");
             System.exit(1);
         }
         Path wav = Path.of(args[0]);
@@ -52,11 +52,18 @@ public final class Replay {
         ClaimGate gate = new ClaimGate(modelsDir.resolve("claim-gate"));
         // Same defaults as application.properties. Without Ollama running, sentences are only classified.
         ClaimRewriter llm = new ClaimRewriter("http://127.0.0.1:11434", "gemma3:4b", java.time.Duration.ofSeconds(10));
-        // The Google key comes from the environment, as in application.properties; without it only Wikipedia is used.
+        // The keys come from the environment, as in application.properties. Passages come from Wikipedia
+        // unless --before=2016-09-26 (the day of the recorded debate) is given: a web search without
+        // that limit finds articles about the debate itself, and every search is paid for.
         java.time.Duration checkTimeout = java.time.Duration.ofSeconds(8);
+        java.time.LocalDate before = java.util.Arrays.stream(rawArgs).filter(a -> a.startsWith("--before="))
+                .map(a -> java.time.LocalDate.parse(a.substring(9))).findFirst().orElse(null);
+        com.debatechecker.factcheck.ExaEvidence exa = new com.debatechecker.factcheck.ExaEvidence(
+                System.getenv().getOrDefault("EXA_API_KEY", ""), checkTimeout, before);
         FactChecker checker = new FactChecker(
                 new GoogleFactCheck(System.getenv().getOrDefault("GOOGLE_FACTCHECK_KEY", ""), checkTimeout),
-                new WikipediaEvidence("DebateFactChecker/0.1 (personal project)", checkTimeout));
+                before != null && exa.enabled() ? exa
+                        : new WikipediaEvidence("DebateFactChecker/0.1 (personal project)", checkTimeout));
         // Once a minute of audio, as in the live server: each speaker's claims and what the check found.
         MinuteDigest digest = new MinuteDigest("replay", checker, 60, d -> {
             StringBuilder block = new StringBuilder("\n   DIGEST ");

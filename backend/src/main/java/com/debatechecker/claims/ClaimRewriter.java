@@ -61,6 +61,9 @@ public final class ClaimRewriter {
             {"S0, S1", "S1: We built 40 new hospitals.\nS1: And we will", "S1", "because of the", ""},
     };
 
+    /** The first call after Ollama starts reads the model from disk: over 10 s, and Replay then ran without rewriting. */
+    private static final Duration LOAD_TIMEOUT = Duration.ofSeconds(60);
+
     private final HttpClient http = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(2))
@@ -87,7 +90,7 @@ public final class ClaimRewriter {
      */
     public boolean warmUp() {
         try {
-            rewrite(List.of(), List.of(), "S0", "Hello.");
+            rewrite(List.of(), List.of(), "S0", "Hello.", LOAD_TIMEOUT);
             JsonNode running = json.readTree(http.send(
                     HttpRequest.newBuilder(URI.create(baseUrl + "/api/ps")).timeout(timeout).build(),
                     HttpResponse.BodyHandlers.ofString()).body()).path("models");
@@ -120,6 +123,11 @@ public final class ClaimRewriter {
      */
     public String rewrite(List<String> people, List<Line> context, String speaker, String sentence)
             throws IOException, InterruptedException {
+        return rewrite(people, context, speaker, sentence, timeout);
+    }
+
+    private String rewrite(List<String> people, List<Line> context, String speaker, String sentence,
+                           Duration timeout) throws IOException, InterruptedException {
         ObjectNode body = json.createObjectNode();
         body.put("model", model);
         body.put("stream", false);

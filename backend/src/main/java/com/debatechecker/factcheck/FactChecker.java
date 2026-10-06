@@ -20,10 +20,10 @@ import java.util.regex.Pattern;
 
 /**
  * Checks a claim against fact-checks already published (Google Fact Check), whose rating becomes
- * the verdict; if there is none, Wikipedia passages are attached as related reading and the
- * verdict stays UNVERIFIABLE.
+ * the verdict; if there is none, passages from the web (or Wikipedia) are attached as related
+ * reading and the verdict stays UNVERIFIABLE.
  *
- * There is deliberately no LLM verdict from the Wikipedia passages. gemma3:4b, the model the 4 GB
+ * There is deliberately no LLM verdict from the passages. gemma3:4b, the model the 4 GB
  * GPU has room for, was tried as the judge and is wrong too often to show its answer as a verdict
  * (see "Fact-checking" in CLAUDE.md).
  *
@@ -44,7 +44,7 @@ public final class FactChecker implements AutoCloseable {
      */
     public record Result(Verdict verdict, String rating, List<Evidence> sources, boolean repeated, long tookMs) {}
 
-    private static final int WIKIPEDIA_PASSAGES = 3;
+    private static final int PASSAGES = 3;
     private static final int MAX_SOURCES = 3;
     private static final int REMEMBERED = 500;
     /**
@@ -64,7 +64,7 @@ public final class FactChecker implements AutoCloseable {
             "\\b(?:true|correct|accurate|right|confirmed|geppetto checkmark)\\b");
 
     private final GoogleFactCheck google;
-    private final WikipediaEvidence wikipedia;
+    private final EvidenceSource evidence;
     private final ExecutorService lookups = Executors.newVirtualThreadPerTaskExecutor();
     private record Remembered(Set<String> words, Result result) {}
 
@@ -76,13 +76,13 @@ public final class FactChecker implements AutoCloseable {
         }
     };
 
-    /** @param wikipedia null to leave Wikipedia out */
-    public FactChecker(GoogleFactCheck google, WikipediaEvidence wikipedia) {
+    /** @param evidence where to look when no fact-check has been published; null for nowhere */
+    public FactChecker(GoogleFactCheck google, EvidenceSource evidence) {
         this.google = google;
-        this.wikipedia = wikipedia;
+        this.evidence = evidence;
         if (!google.enabled()) {
             log.warn("No Google Fact Check key (debatechecker.google-factcheck-key): claims get no verdict, "
-                    + "only related Wikipedia passages.");
+                    + "only related passages.");
         }
     }
 
@@ -122,15 +122,15 @@ public final class FactChecker implements AutoCloseable {
         boolean complete = true;    // an answer cut short by a network error is not remembered
         // Both at once: Google has nothing for almost every debate claim (127 of 135 on the
         // 18-minute recording) and takes about a second to say so.
-        Future<List<Evidence>> wikipediaAnswer = wikipedia == null ? null
-                : lookups.submit(() -> wikipedia.search(claim, WIKIPEDIA_PASSAGES));
+        Future<List<Evidence>> evidenceAnswer = evidence == null ? null
+                : lookups.submit(() -> evidence.search(claim, PASSAGES));
         try {
             List<Evidence> reviews = google.search(claim);
             if (!reviews.isEmpty()) {
                 Evidence best = reviews.get(0);
                 Result r = new Result(verdictOf(best.rating()), best.rating(),
                         List.copyOf(reviews.subList(0, Math.min(MAX_SOURCES, reviews.size()))), false, msSince(start));
-                if (wikipediaAnswer != null) wikipediaAnswer.cancel(true);
+                if (evidenceAnswer != null) evidenceAnswer.cancel(true);
                 remember(claim, r);
                 return r;
             }
@@ -139,11 +139,11 @@ public final class FactChecker implements AutoCloseable {
             complete = false;
         }
         List<Evidence> passages = List.of();
-        if (wikipediaAnswer != null) {
+        if (evidenceAnswer != null) {
             try {
-                passages = wikipediaAnswer.get();
+                passages = evidenceAnswer.get();
             } catch (ExecutionException e) {
-                log.warn("Wikipedia failed for \"{}\": {}", claim, e.getCause().getMessage());
+                log.warn("Evidence search failed for \"{}\": {}", claim, e.getCause().getMessage());
                 complete = false;
             }
         }

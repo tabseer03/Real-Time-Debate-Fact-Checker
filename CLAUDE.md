@@ -8,6 +8,8 @@ first is confirmed, the second could not be verified"). The user changed this on
 "verdict within 5 s": no free checker is both good and that fast.
 
 ## Constraints from the user (keep to these)
+- **It is for live, current debates** (user, 2026-10-06). The 2012 / 2016 recordings are only test
+  material: when replaying one, web evidence must be capped at the day before that debate.
 - **Java** for the backend (Spring Boot 3, Java 21+; the user runs JDK 22). Plain JS for the extension.
 - **Free only**: local open models or free tiers; no paid APIs.
 - Hardware: Windows, Ryzen 5 5600H (6c/12t), 16 GB RAM, RTX 3050 4 GB. Speech models run on CPU;
@@ -87,9 +89,25 @@ first is confirmed, the second could not be verified"). The user changed this on
   whole minute's claims (a 90-minute debate = 90 requests, not 600), and there is a minute to
   answer in, so a slow local checker (web search + an entailment model) is possible too.
   **Not built: checking a minute's claims in one call** — `MinuteDigest.check` still asks
-  `FactChecker` once per claim. Also seen in the digests: one argument arrives as up to nine
-  fragments ("Two and a half trillion.", "There is no leadership."); a minute's statements should
-  be merged into a few real claims before checking.
+  `FactChecker` once per claim.
+- Pieces and repeats are left out of the digest ✅ (2026-10-06, `MinuteDigest.notCheckable`): one
+  argument arrives as up to nine pieces ("Two and a half trillion.", "There is no leadership."), so
+  a claim is not checked if it is under 2 content words, only a figure, unfinished (no . ? ! at the
+  end), opens with because / where / which / instead / and (or when / if with no comma), opens with
+  an unresolved it / that / they / he, or the same speaker says it more fully in the same minute.
+  session-c51d98d5: 31 claims → 18 checked, the 13 dropped all pieces or repeats. Cost: Trump's
+  "$5 trillion that we can't bring into our country" argument is all pieces, so none of it is
+  checked. Still checked: housekeeping from a moderator not yet known as one, and opinions.
+- Web evidence ✅ (2026-10-06, `factcheck/ExaEvidence`): with `EXA_API_KEY` set, the passages come
+  from Exa's news search instead of Wikipedia (the server always; `FactCheckTry` always; `Replay`
+  only with `--before=2016-09-26`, so that a replay does not spend the allowance by accident). On
+  the 16 claims of `eval/claims.txt`, capped at 2016-09-26, nearly every claim got passages that
+  bear on it directly (AP on the tax returns, Pew "38.8% ... out of work for 27 weeks or more",
+  MarketWatch on the debt nearing $20 trillion, the NYPD's murder count) — Wikipedia managed about
+  5 of 16. 1.3–6.4 s a claim, $0.112 for the 16. Not run through Replay or live yet.
+- **Still no verdict:** the passages are attached and every claim is still UNVERIFIABLE. The
+  entailment model was scored on these passages and is **not good enough to be the judge** (see
+  "Entailment model on real search results" under Decisions). Open: what reads the passages.
 - Next: finish Milestone 4, then 5 (on-page overlay). See bottom.
 
 ## Layout
@@ -122,6 +140,8 @@ backend/              Spring Boot; pom pulls sherpa-onnx v1.13.8 from JitPack (+
                              on its own virtual thread (network only, no GPU); rating → verdict
   factcheck/GoogleFactCheck  claims:search; which returned review counts as "this claim" (Words)
   factcheck/WikipediaEvidence one request = search + text of 3 pages; picks passages by shared words
+  factcheck/ExaEvidence      web search (exa.ai): one paid request per claim, a passage per page;
+                             optional "published before" limit for replays. EvidenceSource = either
   factcheck/FactCheckTry     checks claims from a text file or the command line, no audio
   factcheck/MinuteDigest     per session: a minute's claims → FactChecker → one report by speaker
 classifier/                  Python: compare.py (feature/model comparison), finetune.py (trains the
@@ -360,6 +380,41 @@ segmentation or speaker logic and compare against this.
   "$19.57 trillion" contradicts "20 trillion" (no rounding) and a 2023 figure contradicts a 2016
   claim (no dates). 1.9 s per passage in PyTorch on 2 threads — too slow per claim, fine per
   minute; not tried quantised. No free web search has been tried yet to feed it.
+- **Entailment model on real search results: 10 of 46 passages confidently wrong** (2026-10-06,
+  Python, the same DeBERTa model, the Exa passages for `eval/claims.txt`, judged by hand; a label
+  counts at probability >= 0.9). 30 right, 6 "neither" where a person would say yes, 10 wrong.
+  The wrong ones are not near misses: a passage that reports someone making the claim is taken as
+  the claim (PolitiFact quoting Sanders on Trump and the "hoax", 3 passages, entailment 0.97; "NowThis
+  says ... Bill Clinton didn't sign NAFTA" contradicts NAFTA 0.95); the speaker's own rival version
+  counts as a contradiction (Trump's "small loan of a million dollars", and the WSJ piece that
+  actually reports the larger loans, both 0.97+ against "$14 million"); a different measure
+  ("total government debt was $18.6 trillion" against "20 trillion", 0.99); an unrelated transcript
+  (0.99 against "fighting ISIS"). Per claim, with "TRUE if a passage entails and none contradicts,
+  FALSE the other way round, else nothing": 9 verdicts, 7 right (3 of them resting on a misread
+  passage), 2 wrong ("$14 million from his father" FALSE; gasoline at 1.86 FALSE from an op-ed
+  saying 1.60), 7 no verdict. It is also slow on these longer passages: median 3.5 s each on 2
+  threads, so 3 passages for 7 claims a minute is over a minute of work per minute of debate.
+  It reads one sentence against another; who is speaking in the passage is beyond it.
+- **Best free judge so far: gemini-3.5-flash-lite reading the Exa passages, no search tool**
+  (2026-10-06, Python only, the user's AI Studio key, the same 16 claims and 46 passages; answers
+  compared with what the passages allow, judged by hand). It must copy word for word the sentence
+  that settles the claim, and code checks the quote is in a passage, else the verdict is dropped
+  (this is what stops it answering from memory: without the quote it said "ISIS is a relatively
+  recent organisation" and "he actually cut the deficit by more than half" with no passage).
+  One claim per request: 14 of 16 acceptable, 2 wrong, median 1.6 s. **All 16 in one request (how a
+  minute would be sent): 13 acceptable, 2 wrong verdicts shown, 1 right verdict lost to a misquote,
+  6.7 s, 6,700 tokens in.** The wrong ones are evidence about something narrower taken for the
+  claim, even with a rule against it: "Murders and rapes were up slightly in July" -> "Murders in
+  New York City are up this year" TRUE (both ways of asking); Ford moving small-car production ->
+  "Ford is leaving and thousands of jobs are leaving" TRUE (batch only). Prompt and schema are in
+  the session scratchpad only: verdicts TRUE / FALSE / MISLEADING / NOT ENOUGH, rules that a
+  reported claim, a person's own account, another year's figure and an opinion column settle
+  nothing; JSON schema output works when there is no search tool.
+  Others on the same test: gemini-2.5-flash 3 wrong and 34 s (and 20 requests a day);
+  gemini-3.8-flash timed out at 90 s; gemma-4-31b-it 429, no free quota; gemini-3.5-flash and
+  3.6+ 503 or timeouts. About 55 flash-lite requests today without a 429; **its daily limit is
+  not known** and a 90-minute debate needs about 90. Small test, old debate: Exa's date limit
+  leaks and the model may remember 2016, so live accuracy will be lower.
 - **The user's fully local plan (2026-10-05): each minute, each speaker's sentences → gemma3:4b
   cleans and filters the claims → web search on the CPU → gemma judges → digest 10–30 s later.**
   Tried piece by piece in Python, nothing of it is in the backend yet:
@@ -373,13 +428,51 @@ segmentation or speaker logic and compare against this.
     replace.* session-c51d98d5: 38 claims from 12 speaker-minutes against 31 now, 0.4–4.5 s per
     call. It does not filter ("Hillary Clinton asked 'Why not?'", "Mr. Trump has a two-minute
     answer.", predictions) and it invents ("Hillary Clinton supports Donald Trump.", "The United
-    States is losing two and a half trillion dollars in investment."). It does merge fragments
-    well ("Donald Trump has proposed a tax benefit for his family." from three lines). If used,
-    only for merging, behind the gate and `ClaimChecker`.
+    States is losing two and a half trillion dollars in investment."). It merged one set of
+    fragments well ("Donald Trump has proposed a tax benefit for his family." from three lines).
+  - *gemma3:4b only for merging, behind the gate, does not work either* (2026-10-06, two prompts,
+    the 8 speaker-minutes of session-c51d98d5, 0.4–2.9 s per call). It glues complete claims with
+    "and", and it joins pieces into things nobody said using only words that were said, which
+    `ClaimChecker` cannot catch: "Two and a half trillion is probably $5 trillion that we can't
+    bring into our country", "Mr. Trump has not released his tax returns because nominees have
+    released their returns for decades". So pieces are dropped by rule instead (see Status).
   - *gemma judging search results:* only seen on the junk Bing returned, where it rightly said
     "not enough" 12 times of 13; the one mistake is a kind to expect — a result that reports the
     claim being made ("Trump accused Clinton of fighting ISIS her entire adult life") taken as
     support. Not yet measured on good results.
+- **Web search: Exa's API, not a self-hosted engine** (2026-10-06). SearXNG only forwards to the
+  engines that blocked us, from the same address. Exa's free tier (read from exa.ai/pricing, not
+  yet used): $10 of credit that resets every month, no card; search $4 per 1,000, contents $1 per
+  1,000 pages per type — so a search with highlights for 5 results is about $0.009, roughly 1,100
+  claims a month, 2–4 debates. Check the `costDollars` field of the first real call. Parameters to
+  use: `category: "news"`, `contents.highlights`, and **`endPublishedDate` = the day before the
+  debate when replaying an old one** — otherwise the search finds articles fact-checking that very
+  debate, which a live debate never has. (The Gemini result below was flattered the same way.)
+  Tavily (1,000 a month, no card) is the fallback. FRED / BLS for figures are an idea for later.
+  **Measured on the first calls:** $0.007 a search (5 results with highlights), so about 1,400
+  claims a month. **The date limit needs both ends**: with only `endPublishedDate` Exa returned
+  pages it has no date for, 2022 articles among them; with `startPublishedDate` as well every
+  result was dated and in range (`ExaEvidence` sends start = 3 years earlier and drops undated
+  results). It still leaks a little: Politico pages about the debate itself came back dated
+  2016-09-01 (Exa only knows the month). Don't trust a replay verdict that rests on such a page.
+- **Google's bulk ClaimReview feed is not the way to preload fact-checks** (2026-10-06;
+  storage.googleapis.com/datacommons-feeds/factcheck/latest/data.json, 207 MB, updated daily).
+  100,143 fact-checks from 2018 on, 24,000 in English, but US politics has almost stopped arriving:
+  PolitiFact 5–11 a month in 2026 and none after July, 221 English items since July (mostly India,
+  Sri Lanka, the Philippines). For "Trump", last 30 days: 1 in the feed, 85 from the live API
+  (`claims:search` with `maxAgeDays`); last 90 days: 6 against 221 in 3 requests. Those 221 are
+  mostly Snopes and Lead Stories on viral posts; 14 are things Trump said. So preloading means
+  paging the live API by candidate name, and even that holds few debate-style claims. The feed is
+  only good as an archive of 2019–2024 (8,166 PolitiFact items). Nothing built.
+- **Seen elsewhere: github.com/scumola/debate** (user's link, 2026-10-06; Python, MIT, one commit,
+  no accuracy figures; read, not run). faster-whisper → regex claim patterns → nomic-embed-text +
+  FAISS over a local database of published fact-checks (top 5, cosine ≥ 0.75) plus the Google API →
+  mistral:7b told to use only the matches, else UNVERIFIED; no web search. Worth taking: **Google's
+  whole ClaimReview feed is one free file, no key or quota**
+  (https://storage.googleapis.com/datacommons-feeds/factcheck/latest/data.json, about 200 MB), which
+  is the way to preload fact-checks before a debate and match them by meaning. Not worth taking:
+  the regex gate, and an LLM deciding whether a matched fact-check is the same claim (our
+  tax-returns and born-in-Kenya cases are exactly that mistake). Feed not downloaded or tried yet.
 - **Gemini as the judge: good with Google Search grounding, but not on the free tier** (tried
   2026-10-05 with the user's AI Studio key, Python prototypes only — nothing in the backend yet).
   The user's Google AI Pro plan is for the Gemini app and does not change API quotas.
@@ -447,6 +540,13 @@ segmentation or speaker logic and compare against this.
   the log. A terminal run needs `$env:GOOGLE_FACTCHECK_KEY` set by hand. Never print the key.
 - `mvn` is not on PATH. IntelliJ's is at
   `C:\Program Files\JetBrains\IntelliJ IDEA 2024.2.0.1\plugins\maven\lib\maven3\bin\mvn.cmd`.
+- After Ollama starts, the first call loads the model from disk (over 10 s): the warm-up call has
+  its own 60 s timeout since 2026-10-06; before that such a Replay ran with rewriting off.
+- The keys can be read from `.idea/workspace.xml` into `$env:` for a terminal run without showing
+  them (regex on `name="GOOGLE_FACTCHECK_KEY" value="..."`, same for `EXA_API_KEY` and
+  `GEMINI_API_KEY`).
+- Google's Fact Check API answered 503 "service is currently unavailable" to most requests on the
+  evening of 2026-10-06; the check carries on without it (the answer is then not remembered).
 - Don't call Ollama while a Replay is starting: its warm-up timed out behind another request and
   that run had rewriting off.
 - The extension needs the `activeTab` permission, or `tab.url` is undefined. `scripting` +

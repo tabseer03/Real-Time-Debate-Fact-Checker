@@ -64,4 +64,14 @@ final class Words {
         for (String w : a) if (b.contains(w)) n++;
         return (double) n / a.size();
     }
+
+    private static final Set<String> NUMBER_WORDS = Set.of(("two three four five six seven eight nine ten eleven twelve"
+            + " thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty seventy"
+            + " eighty ninety hundred thousand million billion trillion half percent dollars").split(" "));
+
+    /** "Two and a half trillion.": a figure with nothing said about it. */
+    static boolean onlyFigures(List<String> content) {
+        for (String w : content) if (!Character.isDigit(w.charAt(0)) && !NUMBER_WORDS.contains(w)) return false;
+        return true;
+    }
 }

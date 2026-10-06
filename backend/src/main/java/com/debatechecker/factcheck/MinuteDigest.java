@@ -9,6 +9,7 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -90,9 +91,54 @@ public final class MinuteDigest implements AutoCloseable {
         }
         double from = windowStart;
         windowStart = end;
-        if (claims.isEmpty()) return;
         claims.sort((a, b) -> Double.compare(a.sentence().audioStartSec(), b.sentence().audioStartSec()));
-        reports.execute(() -> listener.digest(check(from, end, claims)));
+        List<ClaimPipeline.Claim> worthChecking = new ArrayList<>();
+        for (ClaimPipeline.Claim c : claims) {
+            String why = notCheckable(c, claims);
+            if (why == null) worthChecking.add(c);
+            else log.info("[{}] not checked ({}): {}", sessionId, why, c.claim());
+        }
+        if (worthChecking.isEmpty()) return;
+        reports.execute(() -> listener.digest(check(from, end, worthChecking)));
+    }
+
+    /** A claim that opens with one of these hangs on the sentence before it. */
+    private static final Set<String> CONTINUES = Set.of("because", "where", "which", "instead", "and", "but", "or", "so");
+    /** Opening a claim, these are still whatever the lines before it were about: the rewrite did not resolve them. */
+    private static final Set<String> POINTS_BACK = Set.of("it", "that", "this", "they", "he", "she", "those", "these");
+    /** Fine with a main clause after a comma ("When I was governor, ..."), a loose end without one. */
+    private static final Set<String> SUBORDINATE = Set.of("when", "if", "while", "although", "unless");
+    private static final double SAME_WORDS = 0.8;
+
+    /**
+     * Why a claim is left out of the minute's check, or null. One argument reaches us as up to nine
+     * pieces ("Two and a half trillion.", "That starts with Secretary Clinton."), and a search for a
+     * piece finds nothing. The pieces are dropped by rule, not joined by the LLM: gemma3:4b joined
+     * them into things nobody said, out of words that were all said ("Mr. Trump has not released his
+     * tax returns because nominees have released their returns for decades").
+     *
+     * @param minute everything claimed in the same minute, for spotting a claim said twice
+     */
+    static String notCheckable(ClaimPipeline.Claim claim, List<ClaimPipeline.Claim> minute) {
+        String text = claim.claim().trim();
+        List<String> content = Words.content(text);
+        if (content.size() < 2) return "too short";
+        if (Words.onlyFigures(content)) return "only a figure";
+        if (text.endsWith("...") || !text.matches(".*[.!?][\"')]*")) return "unfinished";
+        String first = text.split("[^A-Za-z']+", 2)[0].toLowerCase();
+        if (CONTINUES.contains(first) || SUBORDINATE.contains(first) && !text.contains(",")) return "continues another";
+        if (POINTS_BACK.contains(first)) return "\"" + first + "\" is not said";
+        Set<String> words = Set.copyOf(content);
+        for (ClaimPipeline.Claim other : minute) {
+            if (other == claim || !other.sentence().speaker().equals(claim.sentence().speaker())) continue;
+            Set<String> theirs = Words.contentSet(other.claim());
+            boolean fuller = theirs.size() > words.size()
+                    || theirs.size() == words.size() && other.sentence().audioStartSec() > claim.sentence().audioStartSec();
+            if (fuller && Words.covered(words, theirs) >= SAME_WORDS && Words.couldBeSame(text, other.claim())) {
+                return "said again more fully";
+            }
+        }
+        return null;
     }
 
     private Digest check(double from, double to, List<ClaimPipeline.Claim> claims) {

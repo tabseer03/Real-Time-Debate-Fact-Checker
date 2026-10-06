@@ -67,4 +67,46 @@ class MinuteDigestTest {
         assertEquals(60, got.get(0).fromSec());
         assertEquals(1, got.get(0).speakers().get(0).statements().size());
     }
+
+    private static ClaimPipeline.Claim claim(String speaker, double start, String text) {
+        return new ClaimPipeline.Claim(new Sentence(speaker, text, start, start + 3, 0), text, true, speaker, 0, 0);
+    }
+
+    /** Claims from session-c51d98d5 as the pipeline produced them. */
+    @Test
+    void piecesAndRepeatsAreNotChecked() {
+        List<ClaimPipeline.Claim> minute = List.of(
+                claim("S0", 4, "Secretary Clinton is calling for a tax increase in the wealthiest Americans."),
+                claim("S0", 9, "Secretary Clinton is calling for a tax increase in the wealthiest Americans, and Mr. Trump is calling for tax cuts for the wealthy."),
+                claim("S1", 35, "When these people put billions and billions of dollars into companies and bring two and a half trillion dollars back from overseas."),
+                claim("S1", 55, "They are leaving our country and, believe it or not,..."),
+                claim("S1", 61, "People are leaving because taxes are too high and because some of them have lots of money outside of our country."),
+                claim("S1", 83, "Because we have a president that can't sit them around the table and get them to approve something."),
+                claim("S1", 93, "Two and a half trillion."),
+                claim("S1", 96, "It's probably $5 trillion that we can't bring into our country, Lester, and with a little leadership, you'd get it in here very quickly,"),
+                claim("S1", 110, "There is no leadership."),
+                claim("S1", 112, "That starts with Secretary Clinton."),
+                claim("S2", 196, "Trickle down did not work."),
+                claim("S2", 203, "Slashing taxes on the wealthy has not worked."),
+                claim("S1", 302, "When they raise interest rates, you're going to see some very bad things happen because the Fed is not doing their job."),
+                claim("S0", 312, "Mr. Trump has not released his tax returns."));
+        List<String> kept = new ArrayList<>();
+        for (ClaimPipeline.Claim c : minute) if (MinuteDigest.notCheckable(c, minute) == null) kept.add(c.claim());
+        assertEquals(List.of(
+                "Secretary Clinton is calling for a tax increase in the wealthiest Americans, and Mr. Trump is calling for tax cuts for the wealthy.",
+                "People are leaving because taxes are too high and because some of them have lots of money outside of our country.",
+                "Trickle down did not work.",
+                "Slashing taxes on the wealthy has not worked.",
+                "When they raise interest rates, you're going to see some very bad things happen because the Fed is not doing their job.",
+                "Mr. Trump has not released his tax returns."), kept);
+    }
+
+    @Test
+    void theSameWordsFromAnotherSpeakerOrWithAnotherFigureAreNotARepeat() {
+        List<ClaimPipeline.Claim> minute = List.of(
+                claim("S1", 5, "Unemployment fell to 5 percent last year."),
+                claim("S2", 9, "Unemployment fell to 5 percent last year in this state."),
+                claim("S1", 20, "Unemployment fell to 4 percent last year in this state."));
+        for (ClaimPipeline.Claim c : minute) assertEquals(null, MinuteDigest.notCheckable(c, minute));
+    }
 }
