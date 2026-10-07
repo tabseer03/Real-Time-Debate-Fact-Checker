@@ -55,7 +55,7 @@ class GeminiJudgeTest {
     @Test
     void aVerdictThatDisagreesWithItselfIsDropped() throws IOException {
         // Seen live: TRUE for "Obama was born in Kenya", quoting a fact-check that calls it false.
-        String quote = "Murders and rapes were up slightly in July";
+        String quote = "Murders and rapes were up slightly in July while overall major crime continued its downward trend this year";
         String flipped = "{\"n\":3,\"quote\":\"" + quote + "\",\"passage\":1,\"reason\":\"x\",\"agrees\":false,\"verdict\":\"TRUE\"}";
         assertNull(rulings(flipped).get(2));
         assertEquals(FactChecker.Verdict.FALSE, rulings(flipped.replace("TRUE", "FALSE")).get(2).verdict());
@@ -91,6 +91,74 @@ class GeminiJudgeTest {
         assertEquals(true, GeminiJudge.ownSide(remarks, "Governor Romney"));     // a government's own site, whoever speaks
         assertEquals(false, GeminiJudge.ownSide(bernanke, "Obama"));
         assertEquals(false, GeminiJudge.ownSide(new Evidence("Web", "", "https://www.bls.gov/news", "x", ""), "Obama"));
+    }
+
+    private static Evidence page(String title, String text) {
+        return new Evidence("Web", title, "https://example.com/x", text, "");
+    }
+
+    /** One claim by Governor Romney with one passage; the same words offered as the verdict's quote and as the closest. */
+    private static GeminiJudge.Ruling romney(String claim, Evidence passage, String verdict, String quote) throws IOException {
+        String said = new ObjectMapper().writeValueAsString(quote);
+        return GeminiJudge.rulings(new ObjectMapper().readTree("{\"claims\":[{\"n\":1,\"closest\":" + said + ",\"quote\":"
+                        + said + ",\"passage\":1,\"reason\":\"x\",\"agrees\":" + verdict.equals("TRUE") + ",\"verdict\":\"" + verdict + "\"}]}"),
+                List.of(new GeminiJudge.Case("Governor Romney", claim, List.of(passage)))).get(0);
+    }
+
+    @Test
+    void theSpeakersOwnWordsOnAnotherPageAreNotEvidence() throws IOException {
+        // session-dc70f661 and session-49b34e95: none of these has "I" or "Romney said" in the quote itself.
+        assertNull(romney("People in the coal industry feel like it's getting crushed by Obama's policies.",
+                page("jayette.com, 2012-10-01: Struggling Illinois coal industry excited about Romney",
+                        "He turned to the president. “People in the coal industry feel like it’s getting crushed by your policies.”"),
+                "TRUE", "People in the coal industry feel like it’s getting crushed by your policies."));
+        assertNull(romney("Governor Romney was in Dayton, Ohio, and a woman grabbed his arm and said she had been out of work since May.",
+                page("washingtonpost.com, 2012-09-26: Romney calls election 'dramatic choice'",
+                        "The crowd was large. Romney said his heart aches, noting that on the campaign trail the day before, "
+                        + "a woman in her 50s told him she had been out of work since May."),
+                "MISLEADING", "noting that on the campaign trail the day before, a woman in her 50s told him she had been out of work since May"));
+        assertNull(romney("New business startups are down to a 30-year low.",
+                page("ocregister.com, 2012-07-23: Romney meets with local small-business executives",
+                        "“The number of business start-ups is at a 30-year low and I want to see more start-ups,” he added."),
+                "NOT ENOUGH", "The number of business start-ups is at a 30-year low and I want to see more start-ups"));
+        assertNull(romney("I also lower deductions and credits and exemptions.",
+                page("einpresswire.com, 2012-07-09: Remarks by the Governor on Taxes",
+                        "That is why I have lowered deductions and credits every year."),
+                "NOT ENOUGH", "That is why I have lowered deductions and credits every year."));
+
+        // Somebody else talking, on a page that is not about the speaker: no verdict, but it can be shown.
+        GeminiJudge.Ruling analyst = romney("Energy independence creates about four million jobs.",
+                page("ogj.com, 2012-08-01: Jobs from North American energy",
+                        "“I estimate that it would create as many as 3.5 million new jobs,” an analyst told the Journal."),
+                "TRUE", "I estimate that it would create as many as 3.5 million new jobs");
+        assertEquals(FactChecker.Verdict.UNVERIFIABLE, analyst.verdict());
+    }
+
+    @Test
+    void aVerdictNeedsAQuoteAboutTheClaim() throws IOException {
+        // session-49b34e95: a figure in the claim and none in the quote; then one shared word.
+        Evidence nj = page("nj.com, 2012-08-24: Vows to ramp up offshore oil drilling", "The candidate, reviving a long-elusive "
+                + "goal, said his plans would make the U.S., along with Canada and Mexico, energy independent by 2020.");
+        assertEquals(FactChecker.Verdict.UNVERIFIABLE, romney("One, get us energy independent, North American energy "
+                + "independent, that creates about four million jobs.", nj, "MISLEADING",
+                "said his plans would make the U.S., along with Canada and Mexico, energy independent by 2020").verdict());
+        Evidence npr = page("npr.org, 2012-08-27: Plan To Broaden Tax Base Finds Critics",
+                "To pay for these cuts, he would reduce or eliminate some of the tax deductions that many Americans have come to rely on.");
+        assertEquals(FactChecker.Verdict.UNVERIFIABLE, romney("He would lower deductions and credits and exemptions so "
+                + "that we keep taking in the same money.", npr, "MISLEADING",
+                "he would reduce or eliminate some of the tax deductions that many Americans have come to rely on").verdict());
+
+        // Kept: another figure for the same thing, and two shared words without any figure.
+        Evidence pew = page("abcnews.com, 2012-08-22: Study: Middle-class poorer",
+                "Median household income dropped nearly $3,500 for a three-person household, to $69,487 a year, the Pew study said.");
+        assertEquals(FactChecker.Verdict.MISLEADING, romney("Middle-income Americans have seen their income come down by $4,300.",
+                pew, "MISLEADING", "Median household income dropped nearly $3,500 for a three-person household").verdict());
+        Evidence oil = page("csmonitor.com, 2012-09-28: Oil production in US hits highest level in 15 years",
+                "Oil production in the United States rose last week to levels not seen since January 1997.");
+        assertEquals(FactChecker.Verdict.TRUE, romney("Oil and natural gas production are higher than they've been in years.",
+                oil, "TRUE", "Oil production in the United States rose last week to levels not seen since January 1997").verdict());
+        assertEquals(false, GeminiJudge.bearsOn("Four years ago we went through the worst financial crisis.", "the banks were rescued"));
+        assertEquals(true, GeminiJudge.bearsOn("Four years ago we went through the worst financial crisis.", "the crisis put financial firms at risk"));
     }
 
     @Test

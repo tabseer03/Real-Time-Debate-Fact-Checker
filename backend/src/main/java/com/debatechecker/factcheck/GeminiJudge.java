@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -64,6 +65,20 @@ public final class GeminiJudge {
     private static final Pattern FIRST_PERSON = Pattern.compile("\\b(?:i|we|my|our|us|me)\\b");
     private static final String SAYING = "said|says|say|told|tells|noted|noting|notes|claimed|claims|argued|argues"
             + "|stated|states|added|adds|recalled|recalls|described|describes";
+    /** A page that is somebody's speech written down ("Remarks by the President on ..."). */
+    private static final Pattern REMARKS = Pattern.compile("\\b(?:remarks|statement|speech|address) (?:by|of|from)\\b");
+    private static final Pattern SENTENCE_BREAK = Pattern.compile("(?<=[.!?][\"”’']?) (?=[\"“‘]?[A-Z0-9])");
+    private static final Pattern WORD_OR_MARK = Pattern.compile("[a-z0-9]+|[“”\"]");
+    /** A verdict's quote shares this many of the claim's words; one will do when both give a figure. */
+    private static final int MIN_SHARED_WORDS = 2;
+    /** Words that begin alike count as the same word ("deductions" / "deduction", "creates" / "create"). */
+    private static final int SAME_WORD_PREFIX = 5;
+    private static final Set<String> NUMBER_WORDS = Set.of(("two three four five six seven eight"
+            + " nine ten eleven twelve twenty thirty forty fifty sixty seventy eighty ninety hundred thousand million"
+            + " billion trillion half double doubled twice triple tripled percent").split(" "));
+    /** "Four years ago", "a 30-year low", "two minutes": a length of time is not the claim's figure. */
+    private static final Set<String> TIME_UNITS = Set.of(
+            "year", "years", "month", "months", "week", "weeks", "day", "days", "hour", "hours", "minute", "minutes");
     private static final Pattern OWN_SIDE_SITES = Pattern.compile(
             "(?:^|\\.)(?:whitehouse\\.gov|\\w*whitehouse\\.archives\\.gov|house\\.gov|senate\\.gov|gop\\.com|gop\\.gov|democrats\\.org|dnc\\.org|rnc\\.org)$");
 
@@ -214,7 +229,8 @@ public final class GeminiJudge {
      * The model's answer, kept only where it can be held to a passage: the quote has to be found,
      * word for word apart from punctuation and capitals, in one of that claim's passages (the model
      * often gets the passage number wrong, so the quote is looked for in all of them), and TRUE or
-     * FALSE has to match its separate answer to "do the quoted words say the claim is right".
+     * FALSE has to match its separate answer to "do the quoted words say the claim is right". The
+     * quote also has to be about the claim ({@link #bearsOn}) and not be somebody talking.
      * Where no verdict is left, the "closest" sentence is kept on the same terms, as UNVERIFIABLE.
      */
     static List<Ruling> rulings(JsonNode answer, List<Case> cases) {
@@ -253,13 +269,93 @@ public final class GeminiJudge {
         // closest thing found, another person's words will do ("I estimate ... as high as 3.5 million
         // new jobs", an analyst): the viewer sees who said it. The speaker's own never do.
         boolean settles = verdict != FactChecker.Verdict.UNVERIFIABLE;
-        if (settles && FIRST_PERSON.matcher(wanted).find() || saidBy(c.speaker(), wanted)) return null;
+        boolean firstPerson = FIRST_PERSON.matcher(wanted).find();
+        if (settles && firstPerson || saidBy(c.speaker(), wanted)) return null;
+        if (settles && !bearsOn(c.claim(), wanted)) return null;
         for (Evidence passage : c.passages()) {
-            if ((" " + plain(passage.title() + " " + passage.text()) + " ").contains(" " + wanted + " ")) {
-                return new Ruling(verdict, passage, quote.trim(), reason);
-            }
+            String page = passage.title() + " " + passage.text();
+            if (!(" " + plain(page) + " ").contains(" " + wanted + " ")) continue;
+            // Words inside quotation marks are somebody talking too. They settle nothing, and on a page
+            // about the speaker they are taken to be the speaker's: live, "People in the coal industry
+            // feel like it's getting crushed" (Romney) was confirmed by a blog quoting him saying it.
+            boolean spoken = firstPerson || insideQuotationMarks(passage.text(), wanted);
+            if (spoken && (settles || mentions(page, c.speaker()) || REMARKS.matcher(plain(passage.title())).find())) continue;
+            // "Romney said his heart aches, noting that | a woman in her 50s told him ...": the quote
+            // began after the words that give it away, so the whole sentence is looked at.
+            if (saidBy(c.speaker(), plain(sentenceWith(passage.text(), wanted)))) continue;
+            return new Ruling(verdict, passage, quote.trim(), reason);
         }
         return null;
+    }
+
+    /**
+     * Whether the quoted words are about what the claim is about, as far as words can tell: they
+     * share two of the claim's words (one, if both give a figure), and if the claim gives a figure
+     * they give one as well. Live, "energy independence creates about four million jobs" was called
+     * misleading on a sentence with no jobs and no figure in it, and "I also lower deductions and
+     * credits ..." on one that shares "deductions" alone.
+     */
+    static boolean bearsOn(String claim, String plainQuote) {
+        boolean figure = hasFigure(plain(claim));
+        if (figure && !hasFigure(plainQuote)) return false;
+        Set<String> found = Words.contentSet(plainQuote);
+        int shared = 0;
+        for (String said : Words.contentSet(claim)) {
+            for (String f : found) {
+                int n = Math.min(SAME_WORD_PREFIX, Math.min(said.length(), f.length()));
+                if (said.equals(f) || n == SAME_WORD_PREFIX && said.regionMatches(0, f, 0, n)) {
+                    shared++;
+                    break;
+                }
+            }
+        }
+        return shared >= (figure ? 1 : MIN_SHARED_WORDS);
+    }
+
+    /** A number or number word that is not a year and not a length of time. */
+    private static boolean hasFigure(String plainText) {
+        String[] words = plainText.split(" ");
+        for (int i = 0; i < words.length; i++) {
+            String w = words[i];
+            boolean number = w.matches("\\d+") && !w.matches("(?:19|20)\\d\\d") || NUMBER_WORDS.contains(w);
+            if (number && !(i + 1 < words.length && TIME_UNITS.contains(words[i + 1]))) return true;
+        }
+        return false;
+    }
+
+    /** Whether the quoted words begin inside quotation marks in this text. */
+    private static boolean insideQuotationMarks(String text, String plainQuote) {
+        List<String> words = new ArrayList<>();
+        List<Boolean> inside = new ArrayList<>();
+        boolean open = false;
+        for (Matcher m = WORD_OR_MARK.matcher(text.toLowerCase()); m.find(); ) {
+            switch (m.group()) {
+                case "“" -> open = true;
+                case "”" -> open = false;
+                case "\"" -> open = !open;
+                default -> {
+                    words.add(m.group());
+                    inside.add(open);
+                }
+            }
+        }
+        int at = Collections.indexOfSubList(words, List.of(plainQuote.split(" ")));
+        return at >= 0 && inside.get(at);
+    }
+
+    /** The sentence of the text that the quoted words are in, or that they begin in; "" if not found. */
+    private static String sentenceWith(String text, String plainQuote) {
+        String[] quoted = plainQuote.split(" ");
+        String start = String.join(" ", List.of(quoted).subList(0, Math.min(MIN_QUOTE_WORDS, quoted.length)));
+        for (String sentence : SENTENCE_BREAK.split(text)) {
+            if ((" " + plain(sentence) + " ").contains(" " + start + " ")) return sentence;
+        }
+        return "";
+    }
+
+    private static boolean mentions(String page, String speaker) {
+        String surname = surname(speaker);
+        return !surname.isEmpty() && (" " + plain(page) + " ").contains(" " + surname + " ");
     }
 
     /**

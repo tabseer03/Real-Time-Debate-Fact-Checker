@@ -230,8 +230,63 @@ first is confirmed, the second could not be verified"). The user changed this on
   Journal); gasoline at 1.86 -> "$1.60" as closest instead of the old wrong FALSE; Ford -> the
   small-car move; oil on federal land -> "fell 10 percent" over other years. Weak: "5 million
   private-sector jobs" gets a sentence without the figure, because the figure is in Obama's own
-  quoted words. **Not run live yet.** With the text always shown, the judge's run-to-run wavering
+  quoted words. Run live since (next entry). With the text always shown, the judge's run-to-run wavering
   between a verdict and none matters less.
+- **"Closest found" run live ✅, and four fixes from what it showed** (2026-10-07, the same video,
+  three runs: session-dc70f661 12.8 min from the start, then session-49b34e95 10.8 min and
+  session-047a4a12 15.1 min, both begun a few seconds in).
+  - **dc70f661, before the fixes:** 59 claims judged, 4 verdicts, 20 with a closest sentence, judge
+    2.1–4.5 s. About 9 of the 20 were useful ($4,300 -> Pew's "nearly $3,500"; 100,000 teachers ->
+    Obama's stated goal; "small business creates the jobs" -> economists disputing it). 4 were the
+    speaker's own words on another page (start-ups at a 30-year low, the $3,600 tax cut, 47
+    training programs, Romney's Q&A with AEI); 3 ended mid-word ("... and that it su"); one verdict
+    was Romney's own debate line quoted by a blog Exa dates 2012-10-01 ("People in the coal industry
+    feel like it's getting crushed by your policies"). "I don't have a $5 trillion tax cut." came
+    back as "He does not have ..." and was then left out as an unresolved "he".
+  - **Passages end at a sentence** (`ExaEvidence.shortened`): over 500 characters, the cut is at
+    the last sentence end, or after the last whole word if there is none in the second half. An
+    initial or a title is not a sentence end and a capital or figure must follow — the first
+    version cut "the 13 most important U.S. | financial firms".
+  - **A rewrite may not open with a pronoun the speaker did not use** (`ClaimChecker.problem`: he /
+    she / they / it / that / this / these / those, absent from the sentence): the claim falls back
+    on the speaker's words. Fired on "He likes coal." and the $5 trillion denial in both later runs.
+  - **The speaker's own words on another page are not evidence** (`GeminiJudge.held`). A quote
+    inside quotation marks never gives a verdict, and is not shown as the closest thing either if
+    the page mentions the speaker's surname; the same for a first-person quote on such a page or
+    on a "Remarks by ..." page; and "Romney said / noted ..." is now looked for in the whole
+    sentence the quote is from, not only in the quote (the Dayton quote began after "Romney said
+    his heart aches, noting that"). Cost: "Romney said X, but the Labor Department reported Y" is
+    dropped whole.
+  - **A verdict's quote must be about the claim** (`GeminiJudge.bearsOn`): it shares two of the
+    claim's content words (first five letters alike count as the same word), or one if both give a
+    figure; and if the claim gives a figure the quote gives one too. Years and lengths of time
+    ("four years ago", "a 30-year low") are not figures. A verdict that fails falls back on the
+    closest sentence.
+  - **49b34e95, with the first two fixes only:** 13 verdicts on 48 claims, 5 of them sound ($5
+    trillion tax cut from Forbes, oil production, corporate rate, housing, $4,300 "misleading"
+    against Pew). Poor: the Dayton woman "misleading" from Romney's rally, "four million jobs"
+    "misleading" from a sentence with no jobs in it, "small business creates the jobs"
+    "contradicted" because economists "are challenging the notion", two verdicts on one vague Pew
+    sentence. The judge took 8.2, 8.5, 16.2 and 13.0 s in the later minutes (limit 25 s); not seen
+    again in the next run, cause unknown.
+  - **047a4a12, with all four:** 75 claims judged, 9 verdicts, 14 with a closest sentence, 15
+    judge requests of 2.7–5.5 s, no 429. Gone: Dayton, four million jobs, "I also lower
+    deductions", the coal line, every closest sentence in the speaker's own words. New and good:
+    "47 training programs" (NBC on the GAO report), oil and gas up but on non-federal land
+    (Washington Times on a Congress research report). Still poor: "It's energy and trade, the right
+    kind of training programs ..." and "Obama believes we should change our tax code ..." confirmed
+    (not statements of fact; the digest's unresolved-pronoun rule does not see "It's" as "it");
+    "54% of America's workers ..." confirmed from the S Corporation Association's own page (an
+    interest group, not on the own-side list). Sentences median 2019 / p90 4479 / max 8380 ms, 21
+    of 209 over 5 s; claims 3110 / 5138 / 9231, 12 of 96 over 5 s.
+  - **Open after these runs:** the log does not say when a guard drops a verdict, so a guard and
+    the judge's own wavering cannot be told apart ("small business creates the jobs" and the $4,300
+    claim lost their verdicts in 047a4a12 and no rule should have touched them); non-claims still
+    reach the judge ("Governor Romney cites a study.", "X believes / is pleased ..."); the $5
+    trillion claim arrived ending in a comma and was skipped as unfinished; "he said" for the
+    speaker is not caught; the wrong-person rewrites came back ("Governor Romney's husband has had
+    four jobs", "Obama wishes Governor Romney a happy anniversary"); Google Fact Check answered 503
+    again. The moderator stayed one voice in both runs that began after "Welcome to you both".
 - Next: finish Milestone 4, then 5 (on-page overlay). See bottom.
 
 ## Layout

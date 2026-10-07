@@ -42,6 +42,8 @@ final class ClaimChecker {
     /** What "we", "our country", "here" get turned into, and titles before a name; not adding anything. */
     private static final Set<String> HOME =
             stems("united states america american americans country us nation people mr mrs ms");
+    /** Opening a claim, these point at something the claim does not name. */
+    private static final Set<String> POINTS_BACK = Set.of("he", "she", "they", "it", "that", "this", "these", "those");
     private static final Pattern LABEL = Pattern.compile("\\bS\\d+\\b");
     private static final Pattern WORD = Pattern.compile("[a-z]+|\\d+");
     private static final Pattern FILLER = Pattern.compile(
@@ -62,6 +64,12 @@ final class ClaimChecker {
         Set<String> added = numbers(c);
         added.removeAll(numbers(o));
         if (!added.isEmpty()) return "adds a number: " + String.join(", ", added);
+
+        // "I don't have a $5 trillion tax cut." came back as "He does not have ...", which names
+        // nobody and is then left out of the minute's check. The speaker's own words are not.
+        if (!c.isEmpty() && POINTS_BACK.contains(c.get(0)) && !o.contains(c.get(0))) {
+            return "opens with \"" + c.get(0) + "\", which was not said";
+        }
 
         Set<String> said = content(o), written = content(c);
         Set<String> deniedBefore = denied(o), deniedAfter = denied(c);

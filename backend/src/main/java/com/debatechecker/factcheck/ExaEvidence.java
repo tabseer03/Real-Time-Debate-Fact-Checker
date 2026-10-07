@@ -160,9 +160,28 @@ public final class ExaEvidence implements EvidenceSource {
             out.add(new Evidence(SOURCE,
                     (site.find() ? site.group(1) : "") + (day.isEmpty() ? "" : ", " + day)
                             + (title.isEmpty() ? "" : ": " + title),
-                    url, passage.length() > MAX_PASSAGE_CHARS ? passage.substring(0, MAX_PASSAGE_CHARS) : passage, ""));
+                    url, shortened(passage, MAX_PASSAGE_CHARS), ""));
             if (out.size() == max) break;
         }
         return out;
+    }
+
+    /** Not after an initial or a title ("the 13 most important U.S. | financial firms"), and a capital or figure must follow. */
+    private static final Pattern SENTENCE_END = Pattern.compile(
+            "(?<!\\b[A-Z])(?<!\\b(?:Mr|Mrs|Ms|Dr|Gov|Sen|Rep|Gen|Prof|St|vs))[.!?][\"'”’)\\]]*(?= [\"'“‘(\\[]?[A-Z0-9])");
+
+    /**
+     * At most {@code max} characters, ending where a sentence ends: the judge quotes passages word
+     * for word, and a passage cut at a fixed length gave quotes like "... and that it su". With no
+     * sentence end in the second half, the cut is after the last whole word.
+     */
+    static String shortened(String passage, int max) {
+        if (passage.length() <= max) return passage;
+        String cut = passage.substring(0, max);
+        int end = -1;
+        for (Matcher m = SENTENCE_END.matcher(passage); m.find() && m.end() <= max; ) end = m.end();
+        if (end >= max / 2) return cut.substring(0, end);
+        int space = passage.charAt(max) == ' ' ? max : cut.lastIndexOf(' ');
+        return space > 0 ? cut.substring(0, space) : cut;
     }
 }
