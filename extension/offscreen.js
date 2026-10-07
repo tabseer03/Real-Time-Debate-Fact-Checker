@@ -34,7 +34,7 @@ function toPage(type, payload) {
   });
 }
 
-async function start({ streamId, tabId: id, tabUrl, tabTitle }) {
+async function start({ streamId, tabId: id, tabUrl, tabTitle, video = {} }) {
   if (stream) return; // already running
   tabId = id;
 
@@ -72,7 +72,10 @@ async function start({ streamId, tabId: id, tabUrl, tabTitle }) {
       encoding: 'pcm_s16le',
       channels: 1,
       tabUrl,
-      tabTitle
+      tabTitle,
+      description: video.description || '',
+      published: video.published || '',
+      liveNow: !!video.liveNow
     }));
   };
   // Milestone 2: the backend sends back finished sentences. For now just log them;
@@ -96,6 +99,9 @@ async function start({ streamId, tabId: id, tabUrl, tabTitle }) {
           console.log(`    [${st.status}] ${st.claim}${source}`);
         }
       }
+    } else if (msg.type === 'debate-date') {
+      console.log(msg.date ? `DEBATE DATE ${msg.date} (from the ${msg.from}): evidence only from before it`
+        : 'DEBATE DATE today (live, or the video does not say)');
     } else if (msg.type === 'speakers') {
       console.log('SPEAKERS ' + Object.entries(msg.names).map(([label, name]) => `${label} = ${name}`).join(', '));
     } else if (msg.type === 'new-speaker') {

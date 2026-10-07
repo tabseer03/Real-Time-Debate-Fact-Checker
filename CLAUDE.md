@@ -130,6 +130,69 @@ first is confirmed, the second could not be verified"). The user changed this on
   about 90 requests); nothing shown yet says a verdict is the model's reading and not a
   fact-checker's rating; unresolved claims ("People are leaving ...") get matched to the wrong
   thing; Exa's date limit leaks pages about the debate itself into replays.
+- **First full live run in Chrome ✅ plumbing, ❌ verdict quality** (2026-10-07, session-d8551bba,
+  5.9 min from the start of the first 2012 Obama–Romney debate, youtube.com/watch?v=KfaBRyCKRhk).
+  Everything that had only run by Replay worked live: the page card (shown four times; Moderator
+  tick, typed name "Obama", pre-filled guess "Governor Romney" saved), `tabTitle`, rewriting with
+  the check and fallback (42 claims, 18 as said), six digests with `quote` / `reason`, the judge
+  2.3–3.6 s a minute. Sentences median 2097 / p90 3440 / max 7959 ms, 6 of 89 over 5 s; claims
+  median 3149 / p90 4524 / max 9364, 4 of 42 over 5 s. The offscreen console showed the digests
+  with quote, source and link (the user's paste); it does not print `reason`.
+  - **The debate's date is read from the video, not set by hand** (user, 2026-10-07; added after
+    this run, `factcheck/DebateDate`). The extension's start message now carries `description`,
+    `published` and `liveNow`, read from YouTube's player in the page's own world
+    (`movie_player.getPlayerResponse()`, falling back on the description box and the
+    `datePublished` meta tag). The backend takes the first date in the description that follows
+    "debate / took place / held / aired / recorded" (else the first date at all, never one later
+    than the video), else the upload date; a broadcast on air, or a date within 2 days of today,
+    is live and gets no limit. An old date limits that session's web search to pages before it
+    (per search now: `EvidenceSource.search(claim, max, before)`, remembered answers are kept apart
+    by date) and is the date the judge is told. Answer to the extension: {"type":"debate-date",
+    "date","from"}. `DebateDateTest` passes. A re-upload with no date in its description gets the
+    re-upload's date, which is too late.
+  - **Run again with it, live in Chrome ✅** (session-8d7b9d06, 5.2 min, same video): "DEBATE DATE
+    2012-10-03 (from the description)". Same first four minutes, 4 verdicts instead of 6: the two
+    from coverage of the debate and the two from later years are gone; "worst financial crisis
+    since the Great Depression" now rests on NBC reporting Bernanke (2010). **Left: 3 verdicts
+    from the speaker's own side** — whitehouse.gov twice ("Millions of jobs were lost", "The auto
+    industry was on the brink of collapse") and the Washington Post reporting Romney telling the
+    Dayton story at a rally. "5 million private-sector jobs in 30 months" still gets nothing.
+    The moderator stayed on one voice this time (three voices, three people): the run began a few
+    seconds later and missed "Gentlemen. Welcome to you both.", so the split in d8551bba comes
+    from those opening lines. Seen once: the rewrite dropped "Governor Romney has a perspective
+    that" and left "If we cut taxes, skew towards the wealthy ... we will be better off." as
+    Obama's own claim (the first run kept it).
+  - **7 "confirmed" of 37 statements, none on a sound source** (even "the worst financial crisis
+    since the Great Depression" rests on the Obama White House's own blog, dated 2013). Three rest on coverage of this debate or the
+    speaker's own telling ("I became the luckiest man on earth because Michelle Obama agreed to
+    marry me", "Governor Romney appreciates the welcome ...", the woman in Dayton from Romney's
+    rally) — the server treats an old video as live, so Exa has no date limit, and the judge's rule
+    against it did not hold. Two rest on the speaker's side talking (Obama's 2009 speech for
+    "Millions of jobs were lost", Biden for the auto industry). One uses a 2020 figure ("Small
+    business creates the jobs"). The hard figures got nothing: 5 million private-sector jobs in 30
+    months, start-ups at a 30-year low, 4 million jobs from energy independence.
+  - **The moderator became two voices**: S0 holds only Jim Lehrer's first nine short lines
+    (11 s), S1 everything he said after. Only S0 was ticked Moderator, so S1's housekeeping ("Each
+    of them has two minutes to start.") was checked as claims. His slow opening also came out in
+    pieces ("What are" / "The major differences." / "between" / "the two of you.").
+  - The title arrives as "(106) Obama vs. Romney: The first 2012 presidential debate - YouTube"
+    (unread counter in front, " - YouTube" behind).
+  - The last digest is lost at stop, as expected ("could not send digest").
+  - The first backend start of the day timed out the 60 s model warm-up (gemma3:4b cold from disk)
+    and logged "Claim rewriting is off"; the server ignores that result and rewrites anyway once
+    the model is in memory, so the message is wrong there.
+- **Nobody is a witness for themselves** (2026-10-07, `GeminiJudge`, after the three verdicts left
+  in session-8d7b9d06). Passages from a politician's own side are not shown to the judge
+  (`ownSide`: whitehouse.gov and its archives, house.gov, senate.gov, the parties' sites, any site
+  with the speaker's surname in its name); a verdict is dropped if its quote is in the first person
+  (I / we / my / our / us / me) or has the speaker saying it ("Romney said", "according to
+  Romney"); and the prompt says so. Another person reporting is still fine ("Ben Bernanke told the
+  panel ..."). `GeminiJudgeTest.nobodyIsAWitnessForThemselves` holds the three live cases.
+  `FactCheckTry eval/claims.txt --before=2016-09-26` afterwards: 8 verdicts of 14 (9–11 before),
+  Ford no longer TRUE, tax returns and born-in-Kenya got none this time; still wrong: gasoline
+  FALSE from an op-ed's "$1.60". **Not yet run live.** Not caught: the speaker's allies speaking
+  on a news site (Biden on the auto industry), and "the president noted that ..." when the
+  speaker is the president.
 - Next: finish Milestone 4, then 5 (on-page overlay). See bottom.
 
 ## Layout
@@ -521,6 +584,18 @@ segmentation or speaker logic and compare against this.
   sources to show. With `google_search` the model does not return JSON reliably ("MISLEADING.
   Donald Trump stated ..."): ask for "VERDICT: ... / REASON: ..." lines and parse those.
   A debate makes about 7 claims a minute, so grounded Gemini needs billing switched on.
+- **Grounded Gemini cannot replace Exa on this key** (2026-10-07, after the user read that
+  2.5-flash-lite allows 500 grounded requests a day). gemini-2.5-flash-lite answers 404 "no longer
+  available to new users"; a `google_search` request is refused with 429 by every 3.x model tried
+  (3-flash-preview, 3.1-flash-lite, 3.5-flash-lite, 3.5 to 3.8-flash, the -latest aliases). Only
+  gemini-2.5-flash searches, 20 requests a day. **And a minute's claims in one grounded request are
+  not searched at all**: 16 claims, and again 4 claims, came back with no search queries and no
+  sources, answered from memory in 7–8 s, and wrong where memory is wrong ("oil production on
+  federal lands increased by 14% in 2011"; "murders in New York City were up by 4.5%"). One claim
+  per request does search (3–5 queries, 4–11 s) and gave different verdicts on the same claims.
+  Grounded answers also have no passage text, so the quote check cannot be applied, and nothing
+  limits the search to before the debate: "Murders ... are up this year" was judged FALSE from the
+  full-year 2016 count.
 - **Google and Wikipedia are asked at the same time**, since Google nearly always says "nothing"
   and takes 0.8–1.9 s to say it (now and then it hangs: capped at 4 s). A Google hit cancels the
   Wikipedia request.

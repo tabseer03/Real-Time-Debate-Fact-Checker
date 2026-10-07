@@ -63,6 +63,37 @@ class GeminiJudgeTest {
     }
 
     @Test
+    void nobodyIsAWitnessForThemselves() throws IOException {
+        // All three seen live on the first 2012 Obama-Romney debate.
+        Evidence remarks = new Evidence("Web", "obamawhitehouse.archives.gov, 2010-08-18: Remarks by the President",
+                "https://obamawhitehouse.archives.gov/the-press-office/x", "And when I was sworn in about 18 months ago, "
+                + "we had already lost several million jobs and we were about to lose several million more.", "");
+        Evidence rally = new Evidence("Web", "washingtonpost.com, 2012-09-26: Romney calls election 'dramatic choice'",
+                "https://www.washingtonpost.com/x", "At Wednesday morning's rally, Romney said his heart aches, noting "
+                + "that a woman in her 50s told him she had been out of work since May.", "");
+        Evidence bernanke = new Evidence("Web", "nbcnews.com, 2011-01-27: Panel blames deregulation",
+                "https://www.nbcnews.com/x", "Federal Reserve Chairman Ben Bernanke told the panel that the crisis put "
+                + "12 of the 13 most important U.S. financial firms at risk of failure.", "");
+        List<GeminiJudge.Case> cases = List.of(
+                new GeminiJudge.Case("Obama", "Millions of jobs were lost.", List.of(remarks)),
+                new GeminiJudge.Case("Governor Romney", "A woman in Dayton said she had been out of work since May.", List.of(rally)),
+                new GeminiJudge.Case("Obama", "It was the worst financial crisis since the Great Depression.", List.of(bernanke)));
+        List<GeminiJudge.Ruling> got = GeminiJudge.rulings(new ObjectMapper().readTree("{\"claims\":["
+                + answer(1, "TRUE", 1, "we had already lost several million jobs") + ","
+                + answer(2, "TRUE", 1, "Romney said his heart aches, noting that a woman in her 50s told him she had been out of work since May") + ","
+                + answer(3, "TRUE", 1, "the crisis put 12 of the 13 most important U.S. financial firms at risk of failure") + "]}"), cases);
+        assertNull(got.get(0));     // somebody speaking: "we"
+        assertNull(got.get(1));     // the speaker telling the story himself
+        assertEquals(bernanke, got.get(2).source());    // somebody else, and "U.S." is not "us"
+
+        assertEquals(true, GeminiJudge.ownSide(remarks, "Obama"));
+        assertEquals(true, GeminiJudge.ownSide(new Evidence("Web", "", "https://www.mittromney.com/jobs", "x", ""), "Governor Romney"));
+        assertEquals(true, GeminiJudge.ownSide(remarks, "Governor Romney"));     // a government's own site, whoever speaks
+        assertEquals(false, GeminiJudge.ownSide(bernanke, "Obama"));
+        assertEquals(false, GeminiJudge.ownSide(new Evidence("Web", "", "https://www.bls.gov/news", "x", ""), "Obama"));
+    }
+
+    @Test
     void notEnoughAndNumbersOutOfRangeGiveNothing() throws IOException {
         List<GeminiJudge.Ruling> got = rulings(
                 answer(1, "NOT ENOUGH", 0, "") + "," + answer(7, "TRUE", 1, "Murders and rapes were up slightly"));

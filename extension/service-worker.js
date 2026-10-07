@@ -39,11 +39,50 @@ async function startCapture(tab) {
     streamId,
     tabId: tab.id,
     tabUrl: tab.url,
-    tabTitle: tab.title
+    tabTitle: tab.title,
+    video: await videoDetails(tab.id)
   });
 
   await chrome.action.setBadgeText({ text: 'ON', tabId: tab.id });
   await chrome.action.setBadgeBackgroundColor({ color: '#15803d', tabId: tab.id });
+}
+
+// What YouTube says about the video: the backend reads the date of an old debate from it.
+// Runs in the page's own world, because the player object is not visible to an isolated script.
+async function videoDetails(tabId) {
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        const out = { description: '', published: '', liveNow: false };
+        try {
+          const r = document.getElementById('movie_player').getPlayerResponse();
+          const micro = (r.microformat && r.microformat.playerMicroformatRenderer) || {};
+          const live = micro.liveBroadcastDetails || {};
+          out.description = (r.videoDetails && r.videoDetails.shortDescription) || '';
+          out.published = live.startTimestamp || micro.publishDate || micro.uploadDate || '';
+          out.liveNow = !!live.isLiveNow;
+        } catch (e) {
+          // no player on this page, or YouTube changed it: fall back on the page itself
+        }
+        if (!out.description) {
+          const box = document.querySelector('#description-inline-expander');
+          out.description = box ? box.textContent : '';
+        }
+        if (!out.published) {
+          const meta = document.querySelector('meta[itemprop="datePublished"]');
+          out.published = meta ? meta.content : '';
+        }
+        out.description = out.description.slice(0, 5000);
+        return out;
+      }
+    });
+    return result || {};
+  } catch (e) {
+    console.warn('Could not read the video description:', e);
+    return {};
+  }
 }
 
 async function stopCapture(tab) {

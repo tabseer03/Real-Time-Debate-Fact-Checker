@@ -4,11 +4,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -66,7 +68,7 @@ public final class FactChecker implements AutoCloseable {
     private final GoogleFactCheck google;
     private final EvidenceSource evidence;
     private final ExecutorService lookups = Executors.newVirtualThreadPerTaskExecutor();
-    private record Remembered(Set<String> words, Result result) {}
+    private record Remembered(String claim, LocalDate before, Set<String> words, Result result) {}
 
     /** Claim as looked up → its answer, least recently used first. */
     private final Map<String, Remembered> remembered = new LinkedHashMap<>(64, 0.75f, true) {
@@ -97,8 +99,16 @@ public final class FactChecker implements AutoCloseable {
 
     /** Returns at once; {@code done} is called exactly once, on another thread unless the answer is remembered. */
     public void check(String claim, Consumer<Result> done) {
+        check(claim, null, done);
+    }
+
+    /**
+     * @param before the day of the debate when an old one is being played: passages are then looked
+     *               for among what was published before it. null for a live debate.
+     */
+    public void check(String claim, LocalDate before, Consumer<Result> done) {
         long start = System.nanoTime();
-        Result known = recall(claim);
+        Result known = recall(claim, before);
         if (known != null) {
             done.accept(new Result(known.verdict(), known.rating(), known.sources(), true, 0));
             return;
@@ -106,7 +116,7 @@ public final class FactChecker implements AutoCloseable {
         lookups.execute(() -> {
             Result result;
             try {
-                result = look(claim, start);
+                result = look(claim, before, start);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 result = new Result(Verdict.UNVERIFIABLE, "", List.of(), false, msSince(start));
@@ -118,12 +128,12 @@ public final class FactChecker implements AutoCloseable {
         });
     }
 
-    private Result look(String claim, long start) throws InterruptedException {
+    private Result look(String claim, LocalDate before, long start) throws InterruptedException {
         boolean complete = true;    // an answer cut short by a network error is not remembered
         // Both at once: Google has nothing for almost every debate claim (127 of 135 on the
         // 18-minute recording) and takes about a second to say so.
         Future<List<Evidence>> evidenceAnswer = evidence == null ? null
-                : lookups.submit(() -> evidence.search(claim, PASSAGES));
+                : lookups.submit(() -> evidence.search(claim, PASSAGES, before));
         try {
             List<Evidence> reviews = google.search(claim);
             if (!reviews.isEmpty()) {
@@ -131,7 +141,7 @@ public final class FactChecker implements AutoCloseable {
                 Result r = new Result(verdictOf(best.rating()), best.rating(),
                         List.copyOf(reviews.subList(0, Math.min(MAX_SOURCES, reviews.size()))), false, msSince(start));
                 if (evidenceAnswer != null) evidenceAnswer.cancel(true);
-                remember(claim, r);
+                remember(claim, before, r);
                 return r;
             }
         } catch (IOException e) {
@@ -148,7 +158,7 @@ public final class FactChecker implements AutoCloseable {
             }
         }
         Result r = new Result(Verdict.UNVERIFIABLE, "", passages, false, msSince(start));
-        if (complete) remember(claim, r);
+        if (complete) remember(claim, before, r);
         return r;
     }
 
@@ -166,18 +176,20 @@ public final class FactChecker implements AutoCloseable {
         return Verdict.UNVERIFIABLE;
     }
 
-    private Result recall(String claim) {
+    /** An answer found with one date limit is not an answer for another: the passages differ. */
+    private Result recall(String claim, LocalDate before) {
         Set<String> words = Words.contentSet(claim);
         synchronized (remembered) {
-            Remembered exact = remembered.get(claim);
+            Remembered exact = remembered.get(before + " " + claim);
             if (exact != null) return exact.result();
             for (Map.Entry<String, Remembered> e : remembered.entrySet()) {
+                if (!Objects.equals(before, e.getValue().before())) continue;
                 Set<String> theirs = e.getValue().words();
                 Set<String> both = new HashSet<>(words);
                 both.retainAll(theirs);
                 int either = words.size() + theirs.size() - both.size();
                 if (either > 0 && (double) both.size() / either >= SAME_CLAIM
-                        && Words.couldBeSame(claim, e.getKey())) {
+                        && Words.couldBeSame(claim, e.getValue().claim())) {
                     return e.getValue().result();
                 }
             }
@@ -185,9 +197,9 @@ public final class FactChecker implements AutoCloseable {
         }
     }
 
-    private void remember(String claim, Result r) {
+    private void remember(String claim, LocalDate before, Result r) {
         synchronized (remembered) {
-            remembered.put(claim, new Remembered(Words.contentSet(claim), r));
+            remembered.put(before + " " + claim, new Remembered(claim, before, Words.contentSet(claim), r));
         }
     }
 

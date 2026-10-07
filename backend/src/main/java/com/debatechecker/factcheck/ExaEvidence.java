@@ -82,6 +82,13 @@ public final class ExaEvidence implements EvidenceSource {
 
     @Override
     public List<Evidence> search(String claim, int max) throws IOException, InterruptedException {
+        return search(claim, max, null);
+    }
+
+    /** @param day the limit for this one search; null for the limit this was built with, if any */
+    @Override
+    public List<Evidence> search(String claim, int max, LocalDate day) throws IOException, InterruptedException {
+        LocalDate before = day != null ? day : this.before;
         if (!enabled() || Words.contentSet(claim).size() < MIN_CLAIM_WORDS) return List.of();
         ObjectNode body = json.createObjectNode();
         body.put("query", claim);

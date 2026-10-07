@@ -5,6 +5,7 @@ import com.debatechecker.claims.ClaimPipeline;
 import com.debatechecker.claims.ClaimRewriter;
 import com.debatechecker.factcheck.Evidence;
 import com.debatechecker.factcheck.FactChecker;
+import com.debatechecker.factcheck.DebateDate;
 import com.debatechecker.factcheck.GeminiJudge;
 import com.debatechecker.factcheck.MinuteDigest;
 import com.debatechecker.speech.Sentence;
@@ -24,6 +25,7 @@ import org.springframework.web.socket.handler.BinaryWebSocketHandler;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 
 import java.io.IOException;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -131,6 +133,22 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
             String type = msg.path("type").asText();
             if ("start".equals(type)) {
                 c.claims().setTitle(msg.path("tabTitle").asText(""));
+                // An old debate played as a test: look for evidence from before it, not from today.
+                DebateDate.Found old = DebateDate.find(msg.path("description").asText(""),
+                        msg.path("published").asText(""), msg.path("liveNow").asBoolean(false), LocalDate.now());
+                String id = ws.getId().substring(0, 8);
+                if (old == null) {
+                    log.info("[{}] DEBATE DATE today (live, or the video does not say)", id);
+                } else {
+                    log.info("[{}] DEBATE DATE {} (from the {}): web search limited to pages before it",
+                            id, old.day(), old.from());
+                    c.digest().setDebateDay(old.day());
+                }
+                Map<String, Object> reply = new LinkedHashMap<>();
+                reply.put("type", "debate-date");
+                reply.put("date", old == null ? "" : old.day().toString());
+                reply.put("from", old == null ? "" : old.from());
+                send(id, c.out(), reply);
             } else if ("speaker-name".equals(type) && msg.path("speaker").asText().matches("S\\d{1,2}")) {
                 // The user's answer to a "new-speaker" message.
                 c.claims().nameSpeaker(msg.path("speaker").asText(), msg.path("name").asText(""),

@@ -62,7 +62,7 @@ public final class MinuteDigest implements AutoCloseable {
     private final String sessionId;
     private final FactChecker checker;
     private final GeminiJudge judge;
-    private final LocalDate debateDay;
+    private volatile LocalDate debateDay;
     private final int windowSeconds;
     private final Listener listener;
     private final List<ClaimPipeline.Claim> waiting = new ArrayList<>();
@@ -87,6 +87,15 @@ public final class MinuteDigest implements AutoCloseable {
         this.debateDay = debateDay;
         this.windowSeconds = windowSeconds;
         this.listener = listener;
+    }
+
+    /**
+     * The day the debate was held, once it is known to be an old one (the server learns it from the
+     * video's description after the session has opened). From then on passages are looked for among
+     * what was published before that day, and the judge is told that date.
+     */
+    public void setDebateDay(LocalDate day) {
+        debateDay = day;
     }
 
     /** Every sentence, claim or not: this is the clock. */
@@ -169,7 +178,7 @@ public final class MinuteDigest implements AutoCloseable {
         for (int i = 0; i < claims.size(); i++) {
             ClaimPipeline.Claim c = claims.get(i);
             int at = i;
-            checker.check(FactChecker.query(c.claim(), c.rewritten(), c.speakerName()), r -> {
+            checker.check(FactChecker.query(c.claim(), c.rewritten(), c.speakerName()), debateDay, r -> {
                 results[at] = r;
                 done.countDown();
             });

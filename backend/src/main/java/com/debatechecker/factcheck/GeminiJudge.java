@@ -19,6 +19,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Reads the passages found for a minute's claims and says what they show: one request to a Gemini
@@ -52,6 +54,16 @@ public final class GeminiJudge {
     private static final String API = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
     /** A quote shorter than this proves nothing ("in 2016"). */
     private static final int MIN_QUOTE_WORDS = 4;
+    /**
+     * In a quote these mean somebody is talking, not that a publication reports something: live, "Millions
+     * of jobs were lost" (Obama) was confirmed by "when I was sworn in ... we had already lost several
+     * million jobs", Obama's own remarks. Matched on the quote without punctuation ("U.S." is "u s").
+     */
+    private static final Pattern FIRST_PERSON = Pattern.compile("\\b(?:i|we|my|our|us|me)\\b");
+    private static final String SAYING = "said|says|say|told|tells|noted|noting|notes|claimed|claims|argued|argues"
+            + "|stated|states|added|adds|recalled|recalls|described|describes";
+    private static final Pattern OWN_SIDE_SITES = Pattern.compile(
+            "(?:^|\\.)(?:whitehouse\\.gov|\\w*whitehouse\\.archives\\.gov|house\\.gov|senate\\.gov|gop\\.com|gop\\.gov|democrats\\.org|dnc\\.org|rnc\\.org)$");
 
     private static final String SYSTEM = """
             You check claims made in a political debate against passages found by a news search. You are given the date of the debate, then each claim, who said it, and its numbered passages (source, date published, headline, text).
@@ -66,6 +78,7 @@ public final class GeminiJudge {
             - Use only the passages. Do not use anything you know yourself; if the passages do not settle it, the answer is NOT ENOUGH, even if you are sure of the truth.
             - A passage that only reports somebody saying the claim, or saying the opposite, is not evidence either way. What counts is what the publication itself reports as fact, or what a fact-checker concluded.
             - A person's own account of themselves does not refute what others report about them.
+            - Nobody is a witness for themselves: a passage in which the speaker of the claim, their campaign, party or government says the same thing, or tells the same story, does not confirm it. Do not quote words that somebody is saying ("I", "we", "he said"); quote what the publication reports as fact.
             - A figure for a different year, place or measure than the claim's settles nothing.
             - An opinion column is weak evidence; do not answer FALSE on it alone.
             - For TRUE, FALSE or MISLEADING you must copy, word for word, the one sentence or part of a sentence from a passage that settles it, as "quote". If that sentence is about a narrower or different thing than the claim (one month when the claim says the year, one product when the claim says the company, a plan when the claim says it happened), it does not settle it: answer NOT ENOUGH. If you cannot copy such words, answer NOT ENOUGH.
@@ -98,8 +111,14 @@ public final class GeminiJudge {
      *         answer could not be used
      * @throws IOException if the model cannot be reached, refuses (quota) or answers nonsense
      */
-    public List<Ruling> judge(LocalDate debateDay, List<Case> cases) throws IOException, InterruptedException {
-        if (!enabled() || cases.isEmpty()) return new ArrayList<>(Collections.nCopies(cases.size(), null));
+    public List<Ruling> judge(LocalDate debateDay, List<Case> all) throws IOException, InterruptedException {
+        if (!enabled() || all.isEmpty()) return new ArrayList<>(Collections.nCopies(all.size(), null));
+        // A politician's own side is not shown to the judge at all, so it may still find another passage.
+        List<Case> cases = new ArrayList<>();
+        for (Case c : all) {
+            cases.add(new Case(c.speaker(), c.claim(),
+                    c.passages().stream().filter(p -> !ownSide(p, c.speaker())).toList()));
+        }
         ObjectNode body = json.createObjectNode();
         body.putObject("systemInstruction").putArray("parts").addObject().put("text", SYSTEM);
         body.putArray("contents").addObject().putArray("parts").addObject().put("text", question(debateDay, cases));
@@ -211,6 +230,8 @@ public final class GeminiJudge {
             String quote = a.path("quote").asText("").trim();
             String wanted = plain(quote);
             if (wanted.split(" ").length < MIN_QUOTE_WORDS) continue;
+            // Somebody speaking is not a publication reporting a fact, and least of all the speaker.
+            if (FIRST_PERSON.matcher(wanted).find() || saidBy(cases.get(n).speaker(), wanted)) continue;
             for (Evidence passage : cases.get(n).passages()) {
                 if ((" " + plain(passage.title() + " " + passage.text()) + " ").contains(" " + wanted + " ")) {
                     out.set(n, new Ruling(verdict, passage, quote, a.path("reason").asText("").trim()));
@@ -219,6 +240,34 @@ public final class GeminiJudge {
             }
         }
         return out;
+    }
+
+    /**
+     * A page where politicians speak for themselves: the government of the day, Congress members'
+     * own pages, the parties, and any site named after the speaker. Seen live: "The auto industry
+     * was on the brink of collapse" (Obama) confirmed by a White House blog post.
+     */
+    static boolean ownSide(Evidence passage, String speaker) {
+        Matcher site = Pattern.compile("^https?://([^/:?#]+)").matcher(passage.url().toLowerCase());
+        if (!site.find()) return false;
+        String host = site.group(1);
+        String surname = surname(speaker);
+        return OWN_SIDE_SITES.matcher(host).find() || !surname.isEmpty() && host.contains(surname);
+    }
+
+    /** "Romney said ..." or "... according to Romney" in the quoted words: the speaker's own telling. */
+    private static boolean saidBy(String speaker, String plainQuote) {
+        String surname = surname(speaker);
+        if (surname.isEmpty()) return false;
+        return Pattern.compile("\\b" + surname + " (?:" + SAYING + ")\\b|\\b(?:" + SAYING + "|according to)"
+                + " (?:\\w+ ){0,2}" + surname + "\\b").matcher(plainQuote).find();
+    }
+
+    /** The last word of the name, in small letters; "" for a voice with no name or a moderator. */
+    private static String surname(String speaker) {
+        String[] words = plain(speaker).split(" ");
+        String last = words[words.length - 1];
+        return last.length() < 4 || speaker.matches("S\\d+") || speaker.toLowerCase().contains("moderator") ? "" : last;
     }
 
     private static String plain(String text) {
