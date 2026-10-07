@@ -287,7 +287,9 @@ first is confirmed, the second could not be verified"). The user changed this on
     speaker is not caught; the wrong-person rewrites came back ("Governor Romney's husband has had
     four jobs", "Obama wishes Governor Romney a happy anniversary"); Google Fact Check answered 503
     again. The moderator stayed one voice in both runs that began after "Welcome to you both".
-- Next: finish Milestone 4, then 5 (on-page overlay). See bottom.
+- Next (user, 2026-10-07): Milestone 4 is good enough to build on. **Milestone 5, the on-page
+  overlay, starts 2026-10-08**; what is listed as open above is refinement for after it, later
+  that week. See bottom.
 
 ## Layout
 ```
