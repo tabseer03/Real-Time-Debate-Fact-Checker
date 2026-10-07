@@ -45,6 +45,8 @@ public final class GeminiJudge {
     public record Case(String speaker, String claim, List<Evidence> passages) {}
 
     /**
+     * @param verdict UNVERIFIABLE if the passages settle nothing: the quote is then the closest
+     *                thing found, shown so that the viewer can compare it with the claim
      * @param source the passage the quote is from
      * @param quote  the words of that passage the verdict rests on, as the model copied them
      * @param reason one sentence for the viewer
@@ -72,6 +74,7 @@ public final class GeminiJudge {
             - FALSE: a passage states, as fact, something the claim cannot be true alongside.
             - MISLEADING: the passages show the claim is partly right but leaves out or distorts something that matters.
             - NOT ENOUGH: anything else. This is the right answer whenever you are unsure.
+            Separately from the verdict, give "closest" for every claim: the one sentence, copied word for word from a passage, that reports a fact or a figure nearest to what the claim is about, even when it settles nothing (an older count, somebody else's estimate, a nearby measure). The viewer is shown it to compare with the claim. Leave it empty only if the claim is an opinion, a courtesy, an intention or about the debate itself, or if no passage is on its subject. With NOT ENOUGH, the reason says how the closest sentence differs from the claim.
             Rules:
             - Only a statement of fact can be checked. Answer NOT ENOUGH if the claim is an opinion or a judgement ("the worst deal ever", "is not doing their job"), a prediction or a promise, something about the debate itself (who has two minutes, who is answering), or says only what somebody thinks, wants, has looked at or is doing in the debate.
             - The debate is not evidence about itself: a passage that describes this debate, or quotes the same speaker saying the same thing on another day, settles nothing.
@@ -83,7 +86,7 @@ public final class GeminiJudge {
             - An opinion column is weak evidence; do not answer FALSE on it alone.
             - For TRUE, FALSE or MISLEADING you must copy, word for word, the one sentence or part of a sentence from a passage that settles it, as "quote". If that sentence is about a narrower or different thing than the claim (one month when the claim says the year, one product when the claim says the company, a plan when the claim says it happened), it does not settle it: answer NOT ENOUGH. If you cannot copy such words, answer NOT ENOUGH.
             - The verdict is about the CLAIM, not about the passage. If a fact-checker calls the claim false, or the passage shows the opposite of the claim, the verdict is FALSE.
-            Answer in this order: the quote ("" for NOT ENOUGH), the number of the passage it is from (0 for NOT ENOUGH), a reason of one sentence a viewer could read, "agrees" (true if the quoted words say the claim is right, false if they say it is wrong), and last the verdict.""";
+            Answer in this order: "closest", the quote ("" if there is none), the number of the passage it is from (0 if none), a reason of one sentence a viewer could read, "agrees" (true if the quoted words say the claim is right, false if they say it is wrong), and last the verdict.""";
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     private final ObjectMapper json = new ObjectMapper();
@@ -107,8 +110,8 @@ public final class GeminiJudge {
 
     /**
      * @param debateDay when the claims were made: "this year" and "now" mean then
-     * @return one entry per case, in order; null where the passages settle nothing or the model's
-     *         answer could not be used
+     * @return one entry per case, in order; null where nothing in the passages bears on the claim
+     *         or the model's answer could not be used
      * @throws IOException if the model cannot be reached, refuses (quota) or answers nonsense
      */
     public List<Ruling> judge(LocalDate debateDay, List<Case> all) throws IOException, InterruptedException {
@@ -186,12 +189,13 @@ public final class GeminiJudge {
         ArrayNode verdicts = fields.putObject("verdict").put("type", "STRING").putArray("enum");
         for (String v : new String[] {"TRUE", "FALSE", "MISLEADING", "NOT ENOUGH"}) verdicts.add(v);
         fields.putObject("passage").put("type", "INTEGER");
+        fields.putObject("closest").put("type", "STRING");
         fields.putObject("quote").put("type", "STRING");
         fields.putObject("reason").put("type", "STRING");
         fields.putObject("agrees").put("type", "BOOLEAN");
         // The label last: written first, it came out as TRUE for "Obama was born in Kenya" beside
         // the reason "fact-checkers classify the claim as false".
-        String[] order = {"n", "quote", "passage", "reason", "agrees", "verdict"};
+        String[] order = {"n", "closest", "quote", "passage", "reason", "agrees", "verdict"};
         ArrayNode ordering = item.putArray("propertyOrdering");
         ArrayNode required = item.putArray("required");
         for (String f : order) {
@@ -211,6 +215,7 @@ public final class GeminiJudge {
      * word for word apart from punctuation and capitals, in one of that claim's passages (the model
      * often gets the passage number wrong, so the quote is looked for in all of them), and TRUE or
      * FALSE has to match its separate answer to "do the quoted words say the claim is right".
+     * Where no verdict is left, the "closest" sentence is kept on the same terms, as UNVERIFIABLE.
      */
     static List<Ruling> rulings(JsonNode answer, List<Case> cases) {
         List<Ruling> out = new ArrayList<>(Collections.nCopies(cases.size(), null));
@@ -223,23 +228,38 @@ public final class GeminiJudge {
                 case "MISLEADING" -> FactChecker.Verdict.MISLEADING;
                 default -> null;
             };
-            if (verdict == null) continue;
+            String reason = a.path("reason").asText("").trim();
             // Asked twice in different words; an answer that disagrees with itself is not used.
             boolean agrees = a.path("agrees").asBoolean(verdict == FactChecker.Verdict.TRUE);
-            if (verdict == FactChecker.Verdict.TRUE && !agrees || verdict == FactChecker.Verdict.FALSE && agrees) continue;
-            String quote = a.path("quote").asText("").trim();
-            String wanted = plain(quote);
-            if (wanted.split(" ").length < MIN_QUOTE_WORDS) continue;
-            // Somebody speaking is not a publication reporting a fact, and least of all the speaker.
-            if (FIRST_PERSON.matcher(wanted).find() || saidBy(cases.get(n).speaker(), wanted)) continue;
-            for (Evidence passage : cases.get(n).passages()) {
-                if ((" " + plain(passage.title() + " " + passage.text()) + " ").contains(" " + wanted + " ")) {
-                    out.set(n, new Ruling(verdict, passage, quote, a.path("reason").asText("").trim()));
-                    break;
-                }
+            boolean consistent = !(verdict == FactChecker.Verdict.TRUE && !agrees || verdict == FactChecker.Verdict.FALSE && agrees);
+            Ruling ruling = verdict == null || !consistent ? null
+                    : held(cases.get(n), verdict, a.path("quote").asText(""), reason);
+            // No verdict that stands: the viewer is still shown the closest thing found. The reason
+            // of a verdict that was thrown away is not shown with it.
+            if (ruling == null) {
+                ruling = held(cases.get(n), FactChecker.Verdict.UNVERIFIABLE, a.path("closest").asText(""),
+                        verdict == null ? reason : "");
             }
+            out.set(n, ruling);
         }
         return out;
+    }
+
+    /** The words the model copied, if they are a publication's own and are in one of the claim's passages. */
+    private static Ruling held(Case c, FactChecker.Verdict verdict, String quote, String reason) {
+        String wanted = plain(quote);
+        if (wanted.split(" ").length < MIN_QUOTE_WORDS) return null;
+        // Somebody speaking is not a publication reporting a fact, and least of all the speaker. As the
+        // closest thing found, another person's words will do ("I estimate ... as high as 3.5 million
+        // new jobs", an analyst): the viewer sees who said it. The speaker's own never do.
+        boolean settles = verdict != FactChecker.Verdict.UNVERIFIABLE;
+        if (settles && FIRST_PERSON.matcher(wanted).find() || saidBy(c.speaker(), wanted)) return null;
+        for (Evidence passage : c.passages()) {
+            if ((" " + plain(passage.title() + " " + passage.text()) + " ").contains(" " + wanted + " ")) {
+                return new Ruling(verdict, passage, quote.trim(), reason);
+            }
+        }
+        return null;
     }
 
     /**

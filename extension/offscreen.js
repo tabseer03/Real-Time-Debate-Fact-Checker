@@ -95,7 +95,10 @@ async function start({ streamId, tabId: id, tabUrl, tabTitle, video = {} }) {
         console.log(`  ${sp.name} said:`);
         for (const st of sp.statements) {
           const quote = st.quote ? `"${st.quote}" — ` : '';
-          const source = st.verdict !== 'UNVERIFIABLE' && st.sources.length ? ` — ${quote}${st.sources[0].title} ${st.sources[0].url}` : '';
+          // Without a verdict, the judge may still have found something close: shown for the viewer to compare.
+          const unsettled = st.verdict === 'UNVERIFIABLE';
+          const source = st.sources.length && (!unsettled || st.quote)
+            ? ` — ${unsettled ? 'closest found: ' : ''}${quote}${st.sources[0].title} ${st.sources[0].url}` : '';
           console.log(`    [${st.status}] ${st.claim}${source}`);
         }
       }

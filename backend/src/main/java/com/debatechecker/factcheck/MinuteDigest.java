@@ -41,7 +41,8 @@ public final class MinuteDigest implements AutoCloseable {
 
     /**
      * @param quote  for a verdict the judge reached from a passage: the words it rests on (they are
-     *               in {@code result.sources().get(0)}); "" otherwise
+     *               in {@code result.sources().get(0)}). With "could not be verified": the closest
+     *               thing the judge found, for the viewer to compare. "" otherwise
      * @param reason the judge's one sentence for the viewer, or ""
      */
     public record Statement(ClaimPipeline.Claim claim, FactChecker.Result result, String quote, String reason) {}
@@ -245,13 +246,16 @@ public final class MinuteDigest implements AutoCloseable {
         long start = System.nanoTime();
         try {
             List<GeminiJudge.Ruling> answers = judge.judge(debateDay != null ? debateDay : LocalDate.now(), cases);
-            int given = 0;
+            int given = 0, close = 0;
             for (int k = 0; k < asked.size(); k++) {
                 rulings[asked.get(k)] = answers.get(k);
-                if (answers.get(k) != null) given++;
+                if (answers.get(k) == null) continue;
+                if (answers.get(k).verdict() == FactChecker.Verdict.UNVERIFIABLE) close++;
+                else given++;
             }
-            log.info("[{}] judge: {} verdicts for {} claims of {}-{} s in {} ms", sessionId, given, cases.size(),
-                    (int) from, (int) to, (System.nanoTime() - start) / 1_000_000);
+            log.info("[{}] judge: {} verdicts and {} with something close for {} claims of {}-{} s in {} ms",
+                    sessionId, given, close, cases.size(), (int) from, (int) to,
+                    (System.nanoTime() - start) / 1_000_000);
         } catch (IOException e) {
             log.warn("[{}] no judge for {}-{} s: {}", sessionId, (int) from, (int) to, e.getMessage());
         } catch (InterruptedException e) {
@@ -279,8 +283,10 @@ public final class MinuteDigest implements AutoCloseable {
             out.add("  " + s.name() + " said:");
             for (Statement st : s.statements()) {
                 FactChecker.Result r = st.result();
-                String source = r.verdict() == FactChecker.Verdict.UNVERIFIABLE || r.sources().isEmpty() ? ""
-                        : " — " + (st.quote().isEmpty() ? "" : "\"" + st.quote() + "\" — ") + r.sources().get(0).title()
+                boolean unsettled = r.verdict() == FactChecker.Verdict.UNVERIFIABLE;
+                String source = r.sources().isEmpty() || unsettled && st.quote().isEmpty() ? ""
+                        : " — " + (unsettled ? "closest found: " : "")
+                        + (st.quote().isEmpty() ? "" : "\"" + st.quote() + "\" — ") + r.sources().get(0).title()
                         + (r.rating().isEmpty() ? "" : ", rated \"" + r.rating() + "\"");
                 out.add("    [" + status(r.verdict()) + "] " + st.claim().claim() + source);
             }

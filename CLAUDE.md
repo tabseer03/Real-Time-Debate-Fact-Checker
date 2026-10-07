@@ -190,9 +190,48 @@ first is confirmed, the second could not be verified"). The user changed this on
   panel ..."). `GeminiJudgeTest.nobodyIsAWitnessForThemselves` holds the three live cases.
   `FactCheckTry eval/claims.txt --before=2016-09-26` afterwards: 8 verdicts of 14 (9–11 before),
   Ford no longer TRUE, tax returns and born-in-Kenya got none this time; still wrong: gasoline
-  FALSE from an op-ed's "$1.60". **Not yet run live.** Not caught: the speaker's allies speaking
-  on a news site (Biden on the auto industry), and "the president noted that ..." when the
-  speaker is the president.
+  FALSE from an op-ed's "$1.60". Not caught: the speaker's allies speaking on a news site, and
+  "the president noted that ..." when the speaker is the president.
+- **Third live run, with that rule ✅** (2026-10-07, session-e9ccf76c, 7.3 min, same video from
+  further back). First five minutes: 1 verdict instead of 4 — "Millions of jobs were lost" and the
+  Dayton story no longer confirmed; "The auto industry was on the brink of collapse" still is, now
+  from NBC reporting Biden (the uncaught kind). Minutes 6–8 gave two good ones: both candidates
+  agree the corporate rate is too high (ABC), oil production at its highest since 1997 (CSMonitor,
+  2012-09-28). New faults seen:
+  - **The moderator split in two again at "Welcome to you both", and the second voice was named
+    "Governor Romney" automatically** (Lehrer introduces the candidates on S0, then carries on as
+    S1 for 12+ words = "Romney answered"). The card overrode it. Both runs that begin at the
+    video's start split there; the recordings d8551bba and e9ccf76c reproduce it.
+  - Rewrites that put the wrong person in, and pass the check because known names are allowed:
+    "Obama wishes Mr. Romney a happy anniversary ...", "Romeny's husband has had four jobs in
+    three years" (the woman Romney was quoting).
+  - A typed name cannot be corrected once the card is closed ("Romeny").
+- **Why the hard figures get no verdict: the passages are there, the judge declines**
+  (2026-10-07, `FactCheckTry` on four claims of that debate, `--before=2012-10-03`). "5 million
+  private-sector jobs in 30 months": FactCheck.org and others give 4–4.5 million, so "not enough"
+  is defensible. "Four million jobs from energy independence" is a projection (2–3.5 million in
+  the passages). But "start-ups are down to a 30-year low" has Reuters on Census data ("the
+  startup rate fell to an all-time low ... in 2010") and still gets nothing. A prompt rule saying
+  that a stronger statement supports a weaker one changed nothing and was taken out again.
+  **The judge also varies run to run on identical passages**: `eval/claims.txt` gave 8 verdicts,
+  then 7, sharing only 4 (tax returns, 40% unemployed, born in Kenya, stop-and-frisk each
+  appeared in one run and not the other).
+- **"Could not be verified" now comes with the closest thing found** (user, 2026-10-07: do not
+  just say no; give the viewer a verified text and leave it to their understanding). The judge
+  answers a separate field, `closest`, for every claim: the sentence in the passages nearest to
+  what the claim is about, even when it settles nothing. It is kept on the same terms as a quote
+  (word for word in a passage, own-side pages excluded, never the speaker's own telling; another
+  person's "I estimate ..." is allowed here) and arrives as a statement with verdict UNVERIFIABLE
+  plus `quote`, `reason` (how it differs) and `sources[0]`. A verdict that code throws away falls
+  back on it. Log and extension print `[could not be verified] claim — closest found: "..." —
+  source`. Asking for it inside the NOT ENOUGH rule did nothing (the model left the quote empty);
+  as its own required field it is filled. `FactCheckTry`: "four million jobs from energy
+  independence" -> "creating at least 2 million, and as high as 3.5 million, new jobs" (Oil & Gas
+  Journal); gasoline at 1.86 -> "$1.60" as closest instead of the old wrong FALSE; Ford -> the
+  small-car move; oil on federal land -> "fell 10 percent" over other years. Weak: "5 million
+  private-sector jobs" gets a sentence without the figure, because the figure is in Obama's own
+  quoted words. **Not run live yet.** With the text always shown, the judge's run-to-run wavering
+  between a verdict and none matters less.
 - Next: finish Milestone 4, then 5 (on-page overlay). See bottom.
 
 ## Layout

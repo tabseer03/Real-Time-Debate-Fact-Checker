@@ -94,6 +94,23 @@ class GeminiJudgeTest {
     }
 
     @Test
+    void withoutAVerdictTheClosestThingFoundIsKept() throws IOException {
+        // "Murders ... are up this year" is not settled by one month, but the viewer can be shown it.
+        String close = "{\"n\":3,\"closest\":\"Murders and rapes were up slightly in July\",\"quote\":\"\",\"passage\":0,"
+                + "\"reason\":\"One month, not the year.\",\"agrees\":false,\"verdict\":\"NOT ENOUGH\"}";
+        List<GeminiJudge.Ruling> got = rulings(close);
+        assertEquals(FactChecker.Verdict.UNVERIFIABLE, got.get(2).verdict());
+        assertEquals(DNA, got.get(2).source());
+        assertEquals("One month, not the year.", got.get(2).reason());
+        // Still only words that are in a passage.
+        assertNull(rulings(close.replace("up slightly in July", "up four percent in 2016")).get(2));
+        // A verdict that is thrown away (its quote is nowhere) falls back on the closest sentence, without its reason.
+        got = rulings(close.replace("NOT ENOUGH", "FALSE").replace("\"quote\":\"\"", "\"quote\":\"Murders fell sharply all year long\""));
+        assertEquals(FactChecker.Verdict.UNVERIFIABLE, got.get(2).verdict());
+        assertEquals("", got.get(2).reason());
+    }
+
+    @Test
     void notEnoughAndNumbersOutOfRangeGiveNothing() throws IOException {
         List<GeminiJudge.Ruling> got = rulings(
                 answer(1, "NOT ENOUGH", 0, "") + "," + answer(7, "TRUE", 1, "Murders and rapes were up slightly"));
