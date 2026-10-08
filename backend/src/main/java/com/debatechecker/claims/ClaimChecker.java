@@ -2,6 +2,7 @@ package com.debatechecker.claims;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -29,7 +30,9 @@ final class ClaimChecker {
             + " than there here about into over under up down out off again very just also too more most much many"
             + " some any all each every both few other such own same only even still yet now well really one s t re"
             + " ve ll d m okay yes look know think say said says stated states state claim claims claimed believes"
-            + " believe going go get got make made thing things lot way kind").split(" "));
+            + " believe going go get got make made thing things lot way kind while during since although though"
+            + " whereas because due including regarding among between thus therefore however specifically per"
+            + " either whether").split(" "));
     private static final Set<String> NUMBER_WORDS = Set.of(("zero two three four five six seven eight nine ten eleven"
             + " twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty"
             + " seventy eighty ninety hundred thousand million billion trillion half double triple twice percent")
@@ -116,6 +119,8 @@ final class ClaimChecker {
         Set<String> lost = new TreeSet<>(HEDGES);
         lost.retainAll(o);
         lost.removeAll(c);
+        // "I would like to mention that ..." is manners, not a condition.
+        if (Collections.frequency(o, "would") == 1 && String.join(" ", o).contains("would like")) lost.remove("would");
         if (!lost.isEmpty()) return "drops " + String.join(", ", lost);
 
         Set<String> fresh = new TreeSet<>(written);

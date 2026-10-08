@@ -380,6 +380,42 @@ first is confirmed, the second could not be verified"). The user changed this on
 - **The "rate / rape" mishearing is left alone** (user, 2026-10-08: it sounds like "rape" to the
   ear too, so the system is not wrong; decide only if such a thing shows up in other debates).
   Do not add a hold-back for serious accusations unless the user asks.
+- **A third debate, live** (2026-10-08 night, session-7a658394, 15.7 min from the start of the
+  third 2008 McCain–Obama debate, youtube.com/watch?v=vRQhXooojjY; panel text and full log from
+  the user). Date from the description (2008-10-15), three voices for three people, about 55
+  cards, nearly all with real figures; the sentence grouping gave good units ("... second highest
+  tax rate ... 35%. Ireland, it's 11%.").
+  - **The judge was missing for 9 of 16 minutes**: gemini-3.5-flash-lite answered 503 "high
+    demand" six times and passed 25 s three times; when it answered it took 10–25 s (2–5 s on
+    earlier days). So nearly every card stayed "could not be verified" and nothing was labelled
+    opinion. Now a 503 is tried again, twice, 2.5 s apart; a timeout is not. **Still open: no
+    second model to fall back on.**
+  - The voice of McCain was named "Senator Obama" automatically (the moderator's "Senator Obama.
+    You propose ..." came just before McCain answered); the card put it right.
+  - Fixed after it: "This year's deficit will reach ... $455 billion." was not checked for its
+    "This" (`MinuteDigest.namesItsThing`: this / these + year, country, election ... stand);
+    rewrites rejected for a connective ("while", "including", "due") or for the "would" of "I
+    would like to mention"; thanks inside a sentence that began on another voice ("... for
+    hosting us tonight ... and thank you, Bub.") were a claim.
+  - Left: about 60% of claims still "as said" because the rewrite used one new word ("receive"
+    for "get", "created"); "Senator McCain wants Joe the plumber to spread the wealth around,
+    and Senator Obama wants to do the same." (two joined sentences, meaning lost); names misheard
+    ("Joe Würzburger", "Senator Bauman", "Senator McKay"); a "confirmed" from socialistworker.org
+    (ExxonMobil's $11.7 billion quarter) and one from a page that looks like McCain's own words
+    ("ten trillion-dollar debt", RealClearPolitics).
+- **The check runs every 40 s, not every minute** (user, 2026-10-08; `debatechecker.digest-seconds`,
+  Replay too). The 10 s of grace after the window is unchanged, so a verdict comes 10 s + search +
+  judge after the window closes. One judge request per window: about 135 for a 90-minute debate
+  (90 before); the free tier's daily limit is still unknown. Only good while the judge answers in
+  well under 40 s — on 2026-10-08 night it took 9–34 s.
+- **A sentence that opens with "it" / "they" / "he" / "she" / "that's", or with "and" / "or" /
+  "but" / "because" / "so" and shares a content word, is added to the claim before it** (user,
+  2026-10-08; `ClaimPipeline.carriesOn`; gate-passed sentences only, same limits of 3 sentences
+  and 4 s). Fast Replay of session-7a658394: 35 joins (26 live without it); "During the
+  Depression era, we had ... the Home Ownership Loan Corporation. And they went out and bought up
+  these mortgages ..." is one claim, "... 50% of small business income ... That's 16 million jobs
+  in America." is one. A wrong one: "We have to stop sending $700 billion a year ... It's wind,
+  tide, solar ...". Not run live.
 - Next (user, 2026-10-07): Milestone 4 is good enough to build on; what is listed as open above
   is refinement for after the overlay.
 - **Milestone 5, part 1: the panel is written, ⚠ never run in Chrome** (2026-10-07,

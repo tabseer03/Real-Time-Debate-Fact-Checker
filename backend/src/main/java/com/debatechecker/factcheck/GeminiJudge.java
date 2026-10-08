@@ -65,6 +65,8 @@ public final class GeminiJudge {
     private static final String API = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
     /** A quote shorter than this proves nothing ("in 2016"). */
     private static final int MIN_QUOTE_WORDS = 4;
+    private static final int RETRIES_WHEN_BUSY = 2;
+    private static final long BUSY_PAUSE_MS = 2500;
     /**
      * In a quote these mean somebody is talking, not that a publication reports something: live, "Millions
      * of jobs were lost" (Obama) was confirmed by "when I was sworn in ... we had already lost several
@@ -158,22 +160,27 @@ public final class GeminiJudge {
         config.put("responseMimeType", "application/json");
         config.set("responseSchema", schema());
 
-        // Timed as a whole, like the other lookups.
-        CompletableFuture<HttpResponse<String>> pending = http.sendAsync(
-                HttpRequest.newBuilder(URI.create(String.format(API, model))).timeout(timeout)
-                        .header("Content-Type", "application/json")
-                        .header("x-goog-api-key", key)
-                        .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
-                        .build(),
-                HttpResponse.BodyHandlers.ofString());
-        HttpResponse<String> response;
-        try {
-            response = pending.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            pending.cancel(true);
-            throw new IOException(model + " took over " + timeout.toSeconds() + " s");
-        } catch (ExecutionException e) {
-            throw new IOException(model + ": " + e.getCause(), e.getCause());
+        HttpRequest request = HttpRequest.newBuilder(URI.create(String.format(API, model))).timeout(timeout)
+                .header("Content-Type", "application/json")
+                .header("x-goog-api-key", key)
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .build();
+        HttpResponse<String> response = null;
+        for (int attempt = 0; attempt <= RETRIES_WHEN_BUSY; attempt++) {
+            // "This model is currently experiencing high demand" comes back within a second or two,
+            // and live it took the verdicts of six minutes out of sixteen. One more try is cheap.
+            if (attempt > 0) Thread.sleep(BUSY_PAUSE_MS);
+            // Timed as a whole, like the other lookups.
+            CompletableFuture<HttpResponse<String>> pending = http.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+            try {
+                response = pending.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                pending.cancel(true);
+                throw new IOException(model + " took over " + timeout.toSeconds() + " s");
+            } catch (ExecutionException e) {
+                throw new IOException(model + ": " + e.getCause(), e.getCause());
+            }
+            if (response.statusCode() != 503) break;
         }
         JsonNode root = json.readTree(response.body());
         if (response.statusCode() != 200) {

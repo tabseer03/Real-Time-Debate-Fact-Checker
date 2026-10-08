@@ -28,6 +28,9 @@ final class NonClaims {
             + "|i(?:'ve| have)? (?:got )?a different (?:view|opinion|perspective|take)"
             + "|(?:thank you|thanks|congratulations|welcome)"
             + ")\\b", Pattern.CASE_INSENSITIVE);
+    /** "... for hosting us tonight and it's wonderful to join Senator McCain again and thank you, Bob." */
+    private static final Pattern THANKS = Pattern.compile(
+            "\\b(?:thank you|thanks to|for hosting us|wonderful to (?:join|be))\\b", Pattern.CASE_INSENSITIVE);
     /** "that we change our tax code ...": what is left of "I think it's important that ..." after the cut. */
     private static final Pattern CLAUSE = Pattern.compile(
             LEAD + "that (?:we|i|you|they|he|she)\\b", Pattern.CASE_INSENSITIVE);
@@ -56,6 +59,7 @@ final class NonClaims {
     static String inSentence(String sentence) {
         String text = sentence.trim();
         if (CLAUSE.matcher(text).find()) return "a clause, not a statement";
+        if (THANKS.matcher(text).find() && !FIGURE.matcher(text).find()) return "a courtesy or a feeling";
         Matcher m = COURTESY.matcher(text);
         if (m.find() && !FIGURE.matcher(text).find()
                 && !text.substring(m.end()).toLowerCase().startsWith(" that ")) {

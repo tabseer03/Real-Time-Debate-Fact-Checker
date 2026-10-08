@@ -146,6 +146,21 @@ public final class MinuteDigest implements AutoCloseable {
     /** Fine with a main clause after a comma ("When I was governor, ..."), a loose end without one. */
     private static final Set<String> SUBORDINATE = Set.of("when", "if", "while", "although", "unless");
     private static final double SAME_WORDS = 0.8;
+    /** "This year", "this country": the here and now of the debate, not something from the line before. */
+    private static final Set<String> HERE_AND_NOW = Set.of("year", "year's", "week", "week's", "month", "month's",
+            "morning", "evening", "country", "country's", "nation", "nation's", "election", "campaign", "administration",
+            "administration's", "president", "president's", "congress", "economy", "decade", "century");
+
+    /**
+     * "This year's deficit will reach a record high of $455 billion." was left out as an unresolved
+     * "this" (live, 2026-10-08). Only for these nouns: "That starts with Secretary Clinton." and
+     * "This plan ..." still hang on what was said before.
+     */
+    private static boolean namesItsThing(String first, String text) {
+        if (!first.equals("this") && !first.equals("these")) return false;
+        String[] words = text.split("[^A-Za-z']+", 3);
+        return words.length > 1 && HERE_AND_NOW.contains(words[1].toLowerCase());
+    }
 
     /**
      * Why a claim is left out of the minute's check, or null. One argument reaches us as up to nine
@@ -164,7 +179,7 @@ public final class MinuteDigest implements AutoCloseable {
         if (text.endsWith("...") || !text.matches(".*[.!?][\"')]*")) return "unfinished";
         String first = text.split("[^A-Za-z']+", 2)[0].toLowerCase();
         if (CONTINUES.contains(first) || SUBORDINATE.contains(first) && !text.contains(",")) return "continues another";
-        if (POINTS_BACK.contains(first)) return "\"" + first + "\" is not said";
+        if (POINTS_BACK.contains(first) && !namesItsThing(first, text)) return "\"" + first + "\" is not said";
         Set<String> words = Set.copyOf(content);
         for (ClaimPipeline.Claim other : minute) {
             if (other == claim || !other.sentence().speaker().equals(claim.sentence().speaker())) continue;

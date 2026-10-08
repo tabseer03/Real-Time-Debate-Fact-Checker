@@ -25,6 +25,19 @@ class MinuteDigestTest {
         if (claim) digest.add(new ClaimPipeline.Claim(s, text, true, name, 0, ++ids));
     }
 
+    private static String why(String text) {
+        ClaimPipeline.Claim c = new ClaimPipeline.Claim(new Sentence("S0", text, 0, 4, 0), text, true, "S0", 0, 1);
+        return MinuteDigest.notCheckable(c, List.of(c));
+    }
+
+    @Test
+    void thisYearPointsAtNothing() {
+        // session-7a658394: the first was "not checked".
+        assertEquals(null, why("This year's deficit will reach an astounding record high of $455 billion."));
+        assertEquals("\"this\" is not said", why("This was locker room talk."));
+        assertEquals("\"that\" is not said", why("That creates about 4 million jobs."));
+    }
+
     @Test
     void claimsAreReportedByMinuteAndSpeaker() {
         say("S1", "S1", 5, 9, "We built 40 new hospitals.", true);

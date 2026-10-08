@@ -29,6 +29,20 @@ class ClaimCheckerTest {
     }
 
     @Test
+    void aConnectiveOrGoodMannersDoNotSinkARewrite() {
+        // session-7a658394: rejected for "whil" and for "drops would".
+        assertEquals(null, ClaimChecker.problem(
+                "Well the fact is that businesses in America today are paying the second highest tax rate of anywhere in the world. Our tax rates for business in America is 35%. Ireland, it's 11%.",
+                "Businesses in America are paying the second highest tax rate of anywhere in the world, at 35%, while Ireland's rate is 11%.",
+                List.of(), NAMES, "Senator McCain"));
+        assertEquals(null, ClaimChecker.problem(
+                "I would like to mention that a couple of days ago, Senator Obama was out in Ohio and he had an encounter with a guy who's a plumber.",
+                "A couple of days ago, Senator Obama was out in Ohio and he had an encounter with a guy who's a plumber.",
+                List.of(), List.of("Senator Obama", "Senator McCain"), "Senator McCain"));
+        assertNotNull(problem("If we cut taxes we would be better off.", "We are better off when we cut taxes."));
+    }
+
+    @Test
     void aNameOnlyStandsInForAWordThatPointsAtSomeone() {
         assertEquals(null, problem("My plan has five basic parts.", "Governor Romney's plan has five basic parts."));
         assertEquals(null, problem("You raised taxes four times.", "Obama raised taxes four times."));
@@ -52,6 +66,8 @@ class ClaimCheckerTest {
         assertNotNull(NonClaims.inSentence("I've got a different view."));
         // session-55f94587: became "Donald Trump apologized to his family." and was "contradicted".
         assertNotNull(NonClaims.inSentence("I apologize to my family."));
+        // session-7a658394 (McCain-Obama 2008): the start of it was heard on another voice.
+        assertNotNull(NonClaims.inSentence("University and the people of New York for hosting us tonight and it's wonderful to join Senator McCain again and thank you, Bub."));
         assertNotNull(NonClaims.inSentence("that we change our tax code to make sure that we're helping small businesses,"));
         assertNotNull(NonClaims.inSentence("and that we reduce our deficit in a balanced way that allows us to make these critical investments."));
         assertEquals(null, NonClaims.inSentence("That creates about 4 million jobs."));

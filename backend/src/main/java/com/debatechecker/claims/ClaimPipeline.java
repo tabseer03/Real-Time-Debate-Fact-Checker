@@ -252,7 +252,8 @@ public final class ClaimPipeline implements AutoCloseable {
                     && s.audioStartSec() - unit.last().audioEndSec() <= MAX_GAP_SECONDS
                     && (unit.waiting && (fact || unfinished(unit.last().text().trim()))
                             || Character.isLowerCase(text.charAt(0))
-                            || fact && (words(text) < SHORT_WORDS || repeats(text, unit.text())));
+                            || fact && (words(text) < SHORT_WORDS || repeats(text, unit.text())
+                                    || carriesOn(text, unit.text())));
             if (!joins) {
                 if (unit != null && unit.waiting) send(unit);
                 if (why != null) {
@@ -276,6 +277,26 @@ public final class ClaimPipeline implements AutoCloseable {
 
     private static int words(String text) {
         return text.trim().split("\\s+").length;
+    }
+
+    /** Opening a sentence, these lean on the one before. */
+    private static final Set<String> JOINS_ON = Set.of("and", "or", "but", "because", "so", "which");
+    private static final Set<String> POINTS_AT = Set.of("it", "it's", "they", "they're", "he", "he's", "she", "she's",
+            "that's", "those", "these");
+
+    /**
+     * "And he never apologized for the racist lie." after a claim about him, "It's just a
+     * giveaway." after the claim about the subsidies (user, 2026-10-08): a sentence that opens
+     * with "it" or "they" belongs to the claim before it, and one that opens with "and" / "or" /
+     * "but" does if it is about the same thing, which here means sharing one content word.
+     */
+    private static boolean carriesOn(String sentence, String claimSoFar) {
+        String first = sentence.split("[^A-Za-z']+", 2)[0].toLowerCase();
+        if (POINTS_AT.contains(first)) return true;
+        if (!JOINS_ON.contains(first)) return false;
+        Set<String> shared = ClaimChecker.contentOf(sentence);
+        shared.retainAll(ClaimChecker.contentOf(claimSoFar));
+        return !shared.isEmpty();
     }
 
     /** "What we all saw and heard on Friday", "... and said, Ann,": more is coming. */
