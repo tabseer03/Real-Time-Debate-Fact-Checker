@@ -369,6 +369,17 @@ first is confirmed, the second could not be verified"). The user changed this on
   ..." 0.32, moderator lines from a moderator not ticked. **Not run live.** Joined rewrites got
   worse in places: "The video represents exactly who he is because we've seen him insult and
   rape women throughout the campaign." (the mishearing, now inside a longer claim).
+- **Run live with all of the above** (2026-10-08 evening, same debate, 16 min, the user's paste of
+  the panel): about 52 cards (90-odd before), 6 confirmed / 2 contradicted / 1 misleading, most
+  sound, two of them from joined sentences (Obamacare "68%, 59%, 71%", "spend nearly a week.
+  denigrating a former Miss Universe") and a second fact-checker's rating (PolitiFact "Mostly
+  False" on Bill Clinton / "attacked those same women"). Fixed after it: "You're the one that sent
+  the pictures around your campaign" -> "Donald Trump sent pictures ..." (the "that" exception of
+  the speaker's-name rule now needs "that" to open the sentence). Left: messy joins ending in a
+  cut-off sentence; "He lost his license to practice law." not checked for its "He".
+- **The "rate / rape" mishearing is left alone** (user, 2026-10-08: it sounds like "rape" to the
+  ear too, so the system is not wrong; decide only if such a thing shows up in other debates).
+  Do not add a hold-back for serious accusations unless the user asks.
 - Next (user, 2026-10-07): Milestone 4 is good enough to build on; what is listed as open above
   is refinement for after the overlay.
 - **Milestone 5, part 1: the panel is written, ⚠ never run in Chrome** (2026-10-07,

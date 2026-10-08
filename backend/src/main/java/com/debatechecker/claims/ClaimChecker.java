@@ -98,7 +98,10 @@ final class ClaimChecker {
             who.retainAll(written);
             who.removeAll(said);
         }
-        if (!self.isEmpty() && o.stream().noneMatch(w -> FIRST_PERSON.contains(w) || THINGS.contains(w))) {
+        // "That" has to open the sentence: "You're the one that sent the pictures around your campaign"
+        // came back as "Donald Trump sent pictures around his campaign" (Trump speaking, to Clinton).
+        boolean pointsBack = !o.isEmpty() && THINGS.contains(o.get(0));
+        if (!self.isEmpty() && !pointsBack && o.stream().noneMatch(FIRST_PERSON::contains)) {
             return "puts the speaker in a sentence that is not in the first person";
         }
         if (!others.isEmpty() && o.stream().noneMatch(SOMEONE::contains) && said.stream().noneMatch(TITLES::contains)) {

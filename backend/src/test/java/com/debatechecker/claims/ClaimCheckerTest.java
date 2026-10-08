@@ -38,6 +38,9 @@ class ClaimCheckerTest {
                 "Governor Romney's plan creates about 4 million jobs.", List.of("My plan has five basic parts."),
                 NAMES, "Governor Romney"));
         assertNotNull(problem("The tax plan costs $5 trillion.", "Obama's tax plan costs $5 trillion."));
+        // session of 2026-10-08 evening: "you" turned into the speaker.
+        assertNotNull(problem("You're the one that sent the pictures around your campaign.",
+                "Governor Romney sent pictures around his campaign."));
     }
 
     @Test
