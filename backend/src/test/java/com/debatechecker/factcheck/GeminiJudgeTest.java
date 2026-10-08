@@ -33,6 +33,25 @@ class GeminiJudgeTest {
     }
 
     @Test
+    void anOpinionHasNoVerdictWhateverTheModelAddsToIt() throws IOException {
+        String answer = answer(1, "TRUE", 1, "Signed by a Democratic president Bill Clinton");
+        List<GeminiJudge.Ruling> got = rulings(answer.replace("{\"n\":1,", "{\"n\":1,\"kind\":\"OPINION\","));
+        assertEquals(GeminiJudge.Kind.OPINION, got.get(0).kind());
+        assertEquals(FactChecker.Verdict.UNVERIFIABLE, got.get(0).verdict());
+        assertNull(got.get(0).source());
+        assertEquals("", got.get(0).quote());
+        // A claim with a figure in it is never an opinion (claim 3 has none; this one does).
+        List<GeminiJudge.Case> deficit = List.of(new GeminiJudge.Case("Donald Trump",
+                "Last year, the United States had an almost $800 billion trade deficit.", List.of()));
+        assertNull(GeminiJudge.rulings(new ObjectMapper().readTree(
+                "{\"claims\":[{\"n\":1,\"kind\":\"OPINION\",\"verdict\":\"NOT ENOUGH\",\"reason\":\"x\"}]}"), deficit).get(0));
+        // No "kind" in the answer, or FACT: as before.
+        assertEquals(GeminiJudge.Kind.FACT, rulings(answer).get(0).kind());
+        assertEquals(FactChecker.Verdict.TRUE,
+                rulings(answer.replace("{\"n\":1,", "{\"n\":1,\"kind\":\"FACT\",")).get(0).verdict());
+    }
+
+    @Test
     void aVerdictIsKeptWithThePassageItsQuoteIsIn() throws IOException {
         // The model named passage 1; the words are in passage 2, and differ in capitals and punctuation.
         List<GeminiJudge.Ruling> got = rulings(answer(1, "TRUE", 1, "Signed by a Democratic president Bill Clinton"));

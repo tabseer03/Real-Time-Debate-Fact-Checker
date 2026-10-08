@@ -67,8 +67,12 @@ public final class FactCheckTry {
                     (System.nanoTime() - start) / 1_000_000);
             for (int i = 0; i < cases.size(); i++) {
                 GeminiJudge.Ruling r = rulings.get(i);
-                System.out.printf("  %-12s %s%n", r == null ? "UNVERIFIABLE" : r.verdict(), cases.get(i).claim());
-                if (r != null) {
+                boolean fact = r == null || r.kind() == GeminiJudge.Kind.FACT;
+                System.out.printf("  %-12s %s%n", r == null ? "UNVERIFIABLE" : fact ? r.verdict() : r.kind(),
+                        cases.get(i).claim());
+                if (!fact) {
+                    System.out.printf("      %s%n", r.reason());
+                } else if (r != null) {
                     System.out.printf("      \"%s\"  (%s)%n      %s%n", r.quote(), r.source().title(), r.reason());
                 }
             }

@@ -34,6 +34,10 @@ final class ClaimChecker {
             + " twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty"
             + " seventy eighty ninety hundred thousand million billion trillion half double triple twice percent")
             .split(" "));
+    /** "20 years ago" may come back as "Twenty years ago": the same number, not an added one. */
+    private static final List<String> SPELLED = List.of(("zero one two three four five six seven eight nine ten eleven"
+            + " twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty").split(" "));
+    private static final List<String> TENS = List.of("thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety");
     private static final Set<String> NEGATIONS =
             Set.of("not", "no", "never", "nothing", "none", "neither", "nor", "without", "nobody");
     /** Words that make a statement conditional or uncertain; losing one turns it into a flat assertion. */
@@ -44,6 +48,13 @@ final class ClaimChecker {
             stems("united states america american americans country us nation people mr mrs ms");
     /** Opening a claim, these point at something the claim does not name. */
     private static final Set<String> POINTS_BACK = Set.of("he", "she", "they", "it", "that", "this", "these", "those");
+    private static final Set<String> FIRST_PERSON = Set.of("i", "me", "my", "mine", "myself", "we", "us", "our", "ours");
+    private static final Set<String> THINGS = Set.of("it", "that", "this", "these", "those");
+    /** Words in the sentence that a person's name may stand in for. */
+    private static final Set<String> SOMEONE = Set.of("you", "your", "yours", "he", "him", "his", "she", "her", "hers",
+            "they", "them", "their", "theirs", "we", "us", "our", "ours", "who");
+    private static final Set<String> TITLES = stems("mr mrs ms governor president senator secretary congressman"
+            + " congresswoman mayor vice former opponent");
     private static final Pattern LABEL = Pattern.compile("\\bS\\d+\\b");
     private static final Pattern WORD = Pattern.compile("[a-z]+|\\d+");
     private static final Pattern FILLER = Pattern.compile(
@@ -56,9 +67,11 @@ final class ClaimChecker {
     /**
      * @param context earlier lines the LLM was shown
      * @param names   names and labels of the people in the debate
+     * @param speaker who said the sentence, as in {@code names}
      * @return why the rewrite cannot be trusted, or null if nothing looks wrong
      */
-    static String problem(String original, String claim, List<String> context, Collection<String> names) {
+    static String problem(String original, String claim, List<String> context, Collection<String> names,
+                          String speaker) {
         List<String> o = words(original), c = words(claim);
 
         Set<String> added = numbers(c);
@@ -72,6 +85,25 @@ final class ClaimChecker {
         }
 
         Set<String> said = content(o), written = content(c);
+
+        // A name may only stand in for a word that points at a person. "My plan" can become
+        // "Governor Romney's plan", and so can "That" after "My plan ..."; but "he" is never the
+        // speaker, and a sentence with no "you", "he" or title in it is about nobody else in the room.
+        Set<String> self = content(words(speaker));
+        self.removeAll(TITLES);
+        Set<String> others = content(words(String.join(" ", names)));
+        others.removeAll(self);
+        others.removeAll(TITLES);
+        for (Set<String> who : List.of(self, others)) {
+            who.retainAll(written);
+            who.removeAll(said);
+        }
+        if (!self.isEmpty() && o.stream().noneMatch(w -> FIRST_PERSON.contains(w) || THINGS.contains(w))) {
+            return "puts the speaker in a sentence that is not in the first person";
+        }
+        if (!others.isEmpty() && o.stream().noneMatch(SOMEONE::contains) && said.stream().noneMatch(TITLES::contains)) {
+            return "names someone the sentence does not point at: " + String.join(", ", new TreeSet<>(others));
+        }
         Set<String> deniedBefore = denied(o), deniedAfter = denied(c);
         Set<String> flipped = new TreeSet<>();
         for (String w : deniedBefore) if (written.contains(w) && !deniedAfter.contains(w)) flipped.add(w);
@@ -121,7 +153,12 @@ final class ClaimChecker {
         t = t.replaceAll("n't\\b", " not").replace("cannot", "can not").replaceAll("'s\\b|'", " ");
         List<String> out = new ArrayList<>();
         Matcher m = WORD.matcher(t);
-        while (m.find()) out.add(m.group());
+        while (m.find()) {
+            String w = m.group();
+            if (SPELLED.contains(w) && !w.equals("one")) w = String.valueOf(SPELLED.indexOf(w));
+            else if (TENS.contains(w)) w = String.valueOf(10 * (TENS.indexOf(w) + 3));
+            out.add(w);
+        }
         return out;
     }
 
@@ -140,6 +177,11 @@ final class ClaimChecker {
             if (!STOP.contains(w) && w.length() > 1) out.add(stem(w));
         }
         return out;
+    }
+
+    /** The words of a text that carry its meaning, for telling whether one sentence repeats another. */
+    static Set<String> contentOf(String text) {
+        return content(words(text));
     }
 
     /** The first real word after each negation: what is being denied. */

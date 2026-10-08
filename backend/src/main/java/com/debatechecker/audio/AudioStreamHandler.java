@@ -234,7 +234,13 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
                 s.put("sentence", st.claim().sentence().text());
                 s.put("start", st.claim().sentence().audioStartSec());
                 s.put("verdict", r.verdict().name());
-                s.put("status", MinuteDigest.status(r.verdict()));
+                s.put("status", MinuteDigest.status(st));
+                // "opinion" and "none" are not claims after all: the page sets them apart.
+                s.put("kind", switch (st.kind()) {
+                    case FACT -> "fact";
+                    case OPINION -> "opinion";
+                    case NOT_A_STATEMENT -> "none";
+                });
                 s.put("rating", r.rating());
                 // Set when the verdict was read from a web passage: the words it rests on (from sources[0]).
                 s.put("quote", st.quote());

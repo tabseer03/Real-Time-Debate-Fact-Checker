@@ -51,8 +51,16 @@ public final class GeminiJudge {
      * @param source the passage the quote is from
      * @param quote  the words of that passage the verdict rests on, as the model copied them
      * @param reason one sentence for the viewer
+     * @param kind   anything but FACT has no verdict, no source and no quote
      */
-    public record Ruling(FactChecker.Verdict verdict, Evidence source, String quote, String reason) {}
+    public record Ruling(FactChecker.Verdict verdict, Evidence source, String quote, String reason, Kind kind) {}
+
+    /**
+     * What the claim is, in the judge's reading. The gate and the rewriting LLM let opinions through
+     * as claims ("This is a great country." 0.14, "It's called Make America Great Again." 0.91 on
+     * session-eccca491), and nothing local tells them apart; the judge does.
+     */
+    public enum Kind { FACT, OPINION, NOT_A_STATEMENT }
 
     private static final String API = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent";
     /** A quote shorter than this proves nothing ("in 2016"). */
@@ -84,7 +92,12 @@ public final class GeminiJudge {
 
     private static final String SYSTEM = """
             You check claims made in a political debate against passages found by a news search. You are given the date of the debate, then each claim, who said it, and its numbered passages (source, date published, headline, text).
-            For each claim answer with one verdict:
+            First say what kind of statement each claim is, as "kind":
+            - FACT: it states something about the world that evidence could show to be right or wrong: a figure, an event, what a person or a government did, said, signed or voted for, what a law or a plan contains.
+            - OPINION: a judgement, a characterisation, a feeling, a slogan, a prediction, a promise or an intention ("This is a great country.", "This is like medieval times.", "It was locker room talk.", "I'm not proud of it.", "He is not fit to be president.").
+            - NOT A STATEMENT: a fragment or a question that asserts nothing on its own ("What he thinks about women, what he does to women."), or something about the debate itself (who asks the next question, who has two minutes).
+            Decide the kind from the claim alone, before reading its passages: a claim with no passages, or one that is exaggerated or plainly wrong, is still a FACT if it says something that could be looked up. Anything that gives a figure, an amount or a count, names an event, or says what somebody did or said ("had an almost $800 billion trade deficit", "people are coming in from the Middle East", "many Republicans have said the same thing", "she said in June that he was not fit") is a FACT. A sentence that gives a fact together with a judgement is a FACT. For OPINION and NOT A STATEMENT the verdict is NOT ENOUGH, "closest" and the quote are empty, and the reason says in a few words why it is not a statement of fact.
+            Then, for each claim, answer with one verdict:
             - TRUE: a passage states, as fact or from an official figure, what the claim says. Figures may be rounded ("38.8%" supports "40%", "$19.4 trillion" supports "almost 20 trillion").
             - FALSE: a passage states, as fact, something the claim cannot be true alongside.
             - MISLEADING: the passages show the claim is partly right but leaves out or distorts something that matters.
@@ -101,7 +114,7 @@ public final class GeminiJudge {
             - An opinion column is weak evidence; do not answer FALSE on it alone.
             - For TRUE, FALSE or MISLEADING you must copy, word for word, the one sentence or part of a sentence from a passage that settles it, as "quote". If that sentence is about a narrower or different thing than the claim (one month when the claim says the year, one product when the claim says the company, a plan when the claim says it happened), it does not settle it: answer NOT ENOUGH. If you cannot copy such words, answer NOT ENOUGH.
             - The verdict is about the CLAIM, not about the passage. If a fact-checker calls the claim false, or the passage shows the opposite of the claim, the verdict is FALSE.
-            Answer in this order: "closest", the quote ("" if there is none), the number of the passage it is from (0 if none), a reason of one sentence a viewer could read, "agrees" (true if the quoted words say the claim is right, false if they say it is wrong), and last the verdict.""";
+            Answer in this order: "kind", "closest", the quote ("" if there is none), the number of the passage it is from (0 if none), a reason of one sentence a viewer could read, "agrees" (true if the quoted words say the claim is right, false if they say it is wrong), and last the verdict.""";
 
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     private final ObjectMapper json = new ObjectMapper();
@@ -125,8 +138,8 @@ public final class GeminiJudge {
 
     /**
      * @param debateDay when the claims were made: "this year" and "now" mean then
-     * @return one entry per case, in order; null where nothing in the passages bears on the claim
-     *         or the model's answer could not be used
+     * @return one entry per case, in order; null where the claim is a statement of fact but nothing
+     *         in the passages bears on it, or the model's answer could not be used
      * @throws IOException if the model cannot be reached, refuses (quota) or answers nonsense
      */
     public List<Ruling> judge(LocalDate debateDay, List<Case> all) throws IOException, InterruptedException {
@@ -203,6 +216,8 @@ public final class GeminiJudge {
         fields.putObject("n").put("type", "INTEGER");
         ArrayNode verdicts = fields.putObject("verdict").put("type", "STRING").putArray("enum");
         for (String v : new String[] {"TRUE", "FALSE", "MISLEADING", "NOT ENOUGH"}) verdicts.add(v);
+        ArrayNode kinds = fields.putObject("kind").put("type", "STRING").putArray("enum");
+        for (String k : new String[] {"FACT", "OPINION", "NOT A STATEMENT"}) kinds.add(k);
         fields.putObject("passage").put("type", "INTEGER");
         fields.putObject("closest").put("type", "STRING");
         fields.putObject("quote").put("type", "STRING");
@@ -210,7 +225,7 @@ public final class GeminiJudge {
         fields.putObject("agrees").put("type", "BOOLEAN");
         // The label last: written first, it came out as TRUE for "Obama was born in Kenya" beside
         // the reason "fact-checkers classify the claim as false".
-        String[] order = {"n", "closest", "quote", "passage", "reason", "agrees", "verdict"};
+        String[] order = {"n", "kind", "closest", "quote", "passage", "reason", "agrees", "verdict"};
         ArrayNode ordering = item.putArray("propertyOrdering");
         ArrayNode required = item.putArray("required");
         for (String f : order) {
@@ -245,6 +260,19 @@ public final class GeminiJudge {
                 default -> null;
             };
             String reason = a.path("reason").asText("").trim();
+            Kind kind = switch (a.path("kind").asText("")) {
+                case "OPINION" -> Kind.OPINION;
+                case "NOT A STATEMENT" -> Kind.NOT_A_STATEMENT;
+                default -> Kind.FACT;
+            };
+            // Without passages the model called "Last year, the United States had an almost $800
+            // billion trade deficit." an opinion. A figure is something to look up, whatever it says.
+            if (kind != Kind.FACT && hasFigure(plain(cases.get(n).claim()))) kind = Kind.FACT;
+            // Whatever verdict came with it: an opinion has none.
+            if (kind != Kind.FACT) {
+                out.set(n, new Ruling(FactChecker.Verdict.UNVERIFIABLE, null, "", reason, kind));
+                continue;
+            }
             // Asked twice in different words; an answer that disagrees with itself is not used.
             boolean agrees = a.path("agrees").asBoolean(verdict == FactChecker.Verdict.TRUE);
             boolean consistent = !(verdict == FactChecker.Verdict.TRUE && !agrees || verdict == FactChecker.Verdict.FALSE && agrees);
@@ -283,7 +311,7 @@ public final class GeminiJudge {
             // "Romney said his heart aches, noting that | a woman in her 50s told him ...": the quote
             // began after the words that give it away, so the whole sentence is looked at.
             if (saidBy(c.speaker(), plain(sentenceWith(passage.text(), wanted)))) continue;
-            return new Ruling(verdict, passage, quote.trim(), reason);
+            return new Ruling(verdict, passage, quote.trim(), reason, Kind.FACT);
         }
         return null;
     }

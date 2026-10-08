@@ -287,9 +287,108 @@ first is confirmed, the second could not be verified"). The user changed this on
     speaker is not caught; the wrong-person rewrites came back ("Governor Romney's husband has had
     four jobs", "Obama wishes Governor Romney a happy anniversary"); Google Fact Check answered 503
     again. The moderator stayed one voice in both runs that began after "Welcome to you both".
-- Next (user, 2026-10-07): Milestone 4 is good enough to build on. **Milestone 5, the on-page
-  overlay, starts 2026-10-08**; what is listed as open above is refinement for after it, later
-  that week. See bottom.
+- **Non-claims and wrong-person rewrites, three rules in code** (2026-10-08, after live
+  session-0398c5d0, 3.4 min; `claims/NonClaims`, `ClaimChecker`, `ClaimPipeline`). Verified by
+  `ClaimCheckerTest` and fast Replay of 0398c5d0 and 047a4a12 (no typed names); **not run live**.
+  - *Not a claim, by the sentence's words* (labelled OPINION, never reaches the LLM): a courtesy or
+    feeling in the first person ("I'm pleased to ...", "I appreciate ...", "I'm looking forward
+    ...", "I've got a different view.") unless it has a figure or goes on "that ..."; and a clause
+    left over from a cut ("that we change our tax code ...", "and that we reduce our deficit ...").
+  - *Not a claim, by the rewrite*: the speaker's own name + believes / thinks / wishes / is pleased
+    ... ("Obama believes we should ..."). With a figure in it the speaker's words are kept instead.
+    About someone else ("Governor Romney believes ...", said by Obama) it stays a claim.
+  - *A quoted story*: a sentence that goes into direct speech ("she said, I've been ...", "and
+    said, Ann," — the comma tells it from "he said we would ...") is never rewritten, and the same
+    speaker's next 3 sentences within 20 s are not claims if they say I / we ("my husband has had
+    four jobs", "He's lost his most recent job and we've now just lost our home").
+  - *A name only stands in for a word that points at someone*: the speaker's name needs I / we /
+    my (or that / this / it: "That creates ..." -> "Governor Romney's plan creates ..."); another
+    person's needs you / he / she / they / we or a title. Caught on 047a4a12: "Now you cite a
+    study." -> "Governor Romney cites a study." (Romney speaking).
+  - A number spelled out is the same number ("20 years ago" -> "Twenty years ago" was rejected).
+  - 047a4a12: 15 sentences or rewrites dropped, none of them a real claim. Not caught: "you happy
+    anniversary and let you know ... 40 million people." (a fragment with a figure), "We all know
+    that we've still got a lot of work to do.", housekeeping from a moderator nobody has ticked.
+- **Another debate live, and the judge now says what is not a claim** (2026-10-08, session-eccca491,
+  9.7 min of the second 2016 Trump–Clinton town hall; panel seen working in the user's screenshots).
+  55 claims from 138 sentences, about 6 of them checkable; the rest opinions ("This is a great
+  country.", "This is like medieval times.", "It's called Make America Great Again." — gate 0.91,
+  so no threshold separates them), fragments and moderator lines. The word rules above caught one.
+  - `GeminiJudge` answers a first field `kind` (FACT / OPINION / NOT A STATEMENT) for every claim;
+    anything but FACT loses whatever verdict came with it. `MinuteDigest` now sends the judge every
+    unrated claim of the minute, also those with no web passages. The digest statement carries
+    `kind` ("fact" / "opinion" / "none") and `status` "opinion" / "not a claim"; `overlay.js` greys
+    and shrinks such a card (reason on hover). They still show as "checking…" until the minute's
+    digest, and a minute whose judge request fails (a 503 was seen) labels nothing.
+  - Replay of eccca491 with `--before=2016-10-10`: 21 of 42 judged claims labelled opinion or not
+    a claim, none of them a checkable fact; debatable: "No, I didn't say that at all." and "Other
+    nations are taking American jobs and American wealth." as opinion. **The card's greying has not
+    been run in Chrome.**
+  - **Without passages the judge called real claims opinions** (Replay of session-55f94587, 14.4
+    min, no web search): "Last year, the United States had an almost $800 billion trade deficit.",
+    "People are pouring into our country ... from the Middle East", "Many Republicans and
+    Independents have said the same thing." Now the prompt says to decide the kind from the claim
+    alone, and code never accepts OPINION / NOT A STATEMENT for a claim with a figure
+    (`hasFigure`, so "two minutes" does not count). Same replay after: 33 of 66 labelled (22
+    opinion, 11 not a claim), those three back as facts. Left: a moderator's question with "age
+    59" in it stays a claim.
+  - Seen and not fixed: speech-to-text gave "We've seen him rape women." for "rate women on their
+    appearance" (gate 0.94, shown as a claim); the header said "before 2016-10-10" for a debate
+    held on the evening of 2016-10-09; "I apologize to my family." -> "... apologized to his family."
+- **A claim is up to three of a speaker's sentences, not one** (user, 2026-10-08;
+  `ClaimPipeline.Unit`). A sentence that is cut off (no . ? ! at the end), or a gate-passed one
+  under 6 words, waits for the speaker's next sentence; a sentence that starts in lower case, is
+  a gate-passed one under 6 words, or repeats the claim before it (60% of its content words) is
+  added to that claim, which is then sent again under the same id (`MinuteDigest.add` replaces it,
+  `overlay.js` rewrites the card and sets it back to "checking…"). Limits: 3 sentences, 4 s of
+  audio between them. A waiting sentence is released when the next one comes, from anyone, or at
+  close. Sentence messages are unchanged (one per sentence). Verified by fast Replay of
+  session-55f94587 only: 25 joins in 14 min — the two "$800 billion" sentences are one claim, "it's
+  a one-sided transaction. where we're giving back $150 billion ..." is one, "We have seen him
+  insult women. We've seen him rape women. on their appearance, ranking them from one to ten."
+  came out as "... insult and rank women on their appearance" (the mishearing gone, by luck).
+  **Not run live, latency not measured** (a waiting sentence's claim is later by the length of
+  the next sentence). Bad joins seen: a moderator's fragment on the debater's voice ("... respect
+  for women. have respect for me?"), speech-to-text junk ("I will take care of ISIS. Trevor
+  Burrus,"), and a longer rewrite that changed the meaning ("... never questioned the fitness of
+  prior Republican nominees, but she disagrees with Donald Trump on politics, policies ...").
+- **A weak sentence is not a claim alone, and a claim is not shown twice** (user, 2026-10-08,
+  after live session-aa932303: one-line sentences and repeats were still cards). In
+  `ClaimPipeline`: a gate-passed sentence scoring under `STRONG_FACTUAL` 0.3 waits for the
+  speaker's next gate-passed sentence and only becomes a claim together with one at 0.3 or more
+  (or if the joined text scores 0.3); and a claim that repeats one the same speaker made in the
+  last 90 s (60% of its content words, at least 3, no new figure) is dropped. Log lines: `not a
+  claim (too weak alone, 0.09)`, `not a claim (said before: "...")`. On the 2016 test set
+  (`classifier/data/parity.tsv`) 0.3 keeps 86.3% of check-worthy sentences against 94.2% at
+  0.0506, and passes 43.8% of sentences against 56.9% — the gate's own threshold is unchanged, so
+  the sentence labels are as before. Fast Replay of aa932303 (9.6 min): claim messages 53 -> 30,
+  21 statements in the digests; gone: "This is who Donald Trump is." 0.09, "I agree with
+  everything she said." 0.06, the great country / great land pair, "This is like medieval times.",
+  the second and third "locker room talk". Still cards: "No, I didn't say that at all." 0.94,
+  "Happened a number of years ago in a vacuum ..." 0.63, the list "African Americans, Latinos
+  ..." 0.32, moderator lines from a moderator not ticked. **Not run live.** Joined rewrites got
+  worse in places: "The video represents exactly who he is because we've seen him insult and
+  rape women throughout the campaign." (the mishearing, now inside a longer claim).
+- Next (user, 2026-10-07): Milestone 4 is good enough to build on; what is listed as open above
+  is refinement for after the overlay.
+- **Milestone 5, part 1: the panel is written, ⚠ never run in Chrome** (2026-10-07,
+  `extension/overlay.js`; only `node --check`). offscreen.js now passes every backend message to
+  the page (`toPage(msg.type, msg)`, plus "start" and "stop"). The panel sits under the name
+  cards at the top right: a line with the sentence being spoken, a chip per voice, and a card per
+  claim, newest first — speaker, time, claim, "Said: ..." when it was rewritten, and a badge
+  "checking…" that the minute's digest turns into confirmed / contradicted / misleading / could
+  not be verified, with the quote, the reason and the source link. Decisions in it:
+  - A verdict read by the judge is labelled "Automated reading of this source, not a
+    fact-checker's rating"; one with a `rating` says "Fact-checker's rating: ...".
+  - A claim the digest of its minute leaves out (pieces, repeats) becomes "not checked"; so do
+    claims still waiting at stop (the last digest is lost).
+  - The time shown is the video's, worked out when the claim arrives (`video.currentTime` −
+    latency − the sentence's length), because the backend's clock counts captured audio and
+    drifts from the video after a pause or a jump; assumes 1x speed. A click jumps there.
+  - Clicking a voice's chip reopens the name card, so a typed name can be corrected (the backend
+    already took a second `speaker-name`; that path is untested too).
+  - The panel stays after stop (to read), is cleared at the next start, and can be folded or
+    hidden — in fullscreen it lies over the right of the video.
 
 ## Layout
 ```
@@ -767,4 +866,4 @@ segmentation or speaker logic and compare against this.
    a source like BLS / FRED, or web search through self-hosted SearXNG); the claim's date ("this
    year" in a 2012 video). "Checking…" needs no message: a claim is unchecked until the verdict with
    its `id` arrives, and one always does.
-5. **Overlay (planned, not started):** content script on youtube.com showing speaker, claim, verdict, sources, timestamp.
+5. **Overlay (written, not yet run in Chrome):** `extension/overlay.js` shows speaker, claim, verdict, sources, timestamp. First: run it live and fix what shows.

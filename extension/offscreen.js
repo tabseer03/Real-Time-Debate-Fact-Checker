@@ -37,6 +37,7 @@ function toPage(type, payload) {
 async function start({ streamId, tabId: id, tabUrl, tabTitle, video = {} }) {
   if (stream) return; // already running
   tabId = id;
+  toPage('start');
 
   stream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -78,11 +79,11 @@ async function start({ streamId, tabId: id, tabUrl, tabTitle, video = {} }) {
       liveNow: !!video.liveNow
     }));
   };
-  // Milestone 2: the backend sends back finished sentences. For now just log them;
-  // the on-page overlay comes later.
+  // Everything the backend sends is logged here and shown on the page by overlay.js.
   ws.onmessage = (e) => {
     if (typeof e.data !== 'string') return;
     const msg = JSON.parse(e.data);
+    toPage(msg.type, msg);
     if (msg.type === 'sentence') {
       console.log(`[${msg.speaker}] (${msg.latencyMs} ms) ${msg.category} ${msg.text}`);
     } else if (msg.type === 'claim') {
@@ -109,7 +110,6 @@ async function start({ streamId, tabId: id, tabUrl, tabTitle, video = {} }) {
       console.log('SPEAKERS ' + Object.entries(msg.names).map(([label, name]) => `${label} = ${name}`).join(', '));
     } else if (msg.type === 'new-speaker') {
       console.log(`NEW SPEAKER ${msg.speaker}: ${msg.text}`);
-      toPage('new-speaker', msg);
     }
   };
   ws.onclose = (e) => {

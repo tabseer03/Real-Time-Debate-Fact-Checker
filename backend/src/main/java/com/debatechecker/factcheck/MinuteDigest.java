@@ -44,8 +44,11 @@ public final class MinuteDigest implements AutoCloseable {
      *               in {@code result.sources().get(0)}). With "could not be verified": the closest
      *               thing the judge found, for the viewer to compare. "" otherwise
      * @param reason the judge's one sentence for the viewer, or ""
+     * @param kind   FACT unless the judge read the claim as an opinion or as no statement at all;
+     *               those have no verdict and are shown apart from the claims
      */
-    public record Statement(ClaimPipeline.Claim claim, FactChecker.Result result, String quote, String reason) {}
+    public record Statement(ClaimPipeline.Claim claim, FactChecker.Result result, String quote, String reason,
+                            GeminiJudge.Kind kind) {}
 
     /**
      * @param speakers one entry per speaker who made a claim, in the order they first spoke
@@ -107,7 +110,9 @@ public final class MinuteDigest implements AutoCloseable {
         }
     }
 
+    /** A claim with the id of one still waiting replaces it: the speaker's next sentence was added to it. */
     public synchronized void add(ClaimPipeline.Claim claim) {
+        waiting.removeIf(c -> c.id() == claim.id());
         waiting.add(claim);
     }
 
@@ -203,14 +208,16 @@ public final class MinuteDigest implements AutoCloseable {
         for (int i = 0; i < claims.size(); i++) {
             ClaimPipeline.Claim c = claims.get(i);
             FactChecker.Result r = results[i];
-            Statement statement = new Statement(c, r, "", "");
-            if (rulings[i] != null) {
+            Statement statement = new Statement(c, r, "", "", GeminiJudge.Kind.FACT);
+            if (rulings[i] != null && rulings[i].kind() != GeminiJudge.Kind.FACT) {
+                statement = new Statement(c, r, "", rulings[i].reason(), rulings[i].kind());
+            } else if (rulings[i] != null) {
                 // The passage the verdict rests on goes first, where a fact-checker's review would be.
                 List<Evidence> sources = new ArrayList<>(r.sources());
                 sources.remove(rulings[i].source());
                 sources.add(0, rulings[i].source());
                 statement = new Statement(c, new FactChecker.Result(rulings[i].verdict(), "", sources, r.repeated(),
-                        r.tookMs()), rulings[i].quote(), rulings[i].reason());
+                        r.tookMs()), rulings[i].quote(), rulings[i].reason(), GeminiJudge.Kind.FACT);
             }
             bySpeaker.computeIfAbsent(c.sentence().speaker(), k -> new ArrayList<>()).add(statement);
             names.put(c.sentence().speaker(), c.speakerName());     // the latest: a name may be learned mid-minute
@@ -222,7 +229,8 @@ public final class MinuteDigest implements AutoCloseable {
 
     /**
      * One request for the whole minute: every claim no fact-checker has rated, with the web
-     * passages found for it. Whatever goes wrong, those claims just stay "could not be verified".
+     * passages found for it. A claim without any is sent too: the judge also says whether it is a
+     * statement of fact at all. Whatever goes wrong, those claims just stay "could not be verified".
      */
     private GeminiJudge.Ruling[] judge(double from, double to, List<ClaimPipeline.Claim> claims,
                                        FactChecker.Result[] results) {
@@ -235,26 +243,27 @@ public final class MinuteDigest implements AutoCloseable {
             // Wikipedia passages are picked by shared words and were never good enough to judge from.
             boolean webPassages = !r.sources().isEmpty()
                     && r.sources().stream().allMatch(e -> e.source().equals(ExaEvidence.SOURCE));
-            if (r.verdict() != FactChecker.Verdict.UNVERIFIABLE || !webPassages) continue;
+            if (r.verdict() != FactChecker.Verdict.UNVERIFIABLE) continue;
             ClaimPipeline.Claim c = claims.get(i);
             asked.add(i);
             // A voice without a name yet is "S2", which tells the judge nothing.
             String speaker = c.speakerName().matches("S\\d+") ? "" : c.speakerName();
-            cases.add(new GeminiJudge.Case(speaker, c.claim(), r.sources()));
+            cases.add(new GeminiJudge.Case(speaker, c.claim(), webPassages ? r.sources() : List.of()));
         }
         if (cases.isEmpty()) return rulings;
         long start = System.nanoTime();
         try {
             List<GeminiJudge.Ruling> answers = judge.judge(debateDay != null ? debateDay : LocalDate.now(), cases);
-            int given = 0, close = 0;
+            int given = 0, close = 0, notFacts = 0;
             for (int k = 0; k < asked.size(); k++) {
                 rulings[asked.get(k)] = answers.get(k);
                 if (answers.get(k) == null) continue;
-                if (answers.get(k).verdict() == FactChecker.Verdict.UNVERIFIABLE) close++;
+                if (answers.get(k).kind() != GeminiJudge.Kind.FACT) notFacts++;
+                else if (answers.get(k).verdict() == FactChecker.Verdict.UNVERIFIABLE) close++;
                 else given++;
             }
-            log.info("[{}] judge: {} verdicts and {} with something close for {} claims of {}-{} s in {} ms",
-                    sessionId, given, close, cases.size(), (int) from, (int) to,
+            log.info("[{}] judge: {} verdicts, {} with something close and {} not statements of fact for {} claims"
+                            + " of {}-{} s in {} ms", sessionId, given, close, notFacts, cases.size(), (int) from, (int) to,
                     (System.nanoTime() - start) / 1_000_000);
         } catch (IOException e) {
             log.warn("[{}] no judge for {}-{} s: {}", sessionId, (int) from, (int) to, e.getMessage());
@@ -274,6 +283,15 @@ public final class MinuteDigest implements AutoCloseable {
         };
     }
 
+    /** The same for a statement in the report: one the judge did not read as a statement of fact has no verdict. */
+    public static String status(Statement st) {
+        return switch (st.kind()) {
+            case OPINION -> "opinion";
+            case NOT_A_STATEMENT -> "not a claim";
+            case FACT -> status(st.result().verdict());
+        };
+    }
+
     /** The digest as lines of text, for the log and for Replay. */
     public static List<String> describe(Digest d) {
         List<String> out = new ArrayList<>();
@@ -288,7 +306,7 @@ public final class MinuteDigest implements AutoCloseable {
                         : " — " + (unsettled ? "closest found: " : "")
                         + (st.quote().isEmpty() ? "" : "\"" + st.quote() + "\" — ") + r.sources().get(0).title()
                         + (r.rating().isEmpty() ? "" : ", rated \"" + r.rating() + "\"");
-                out.add("    [" + status(r.verdict()) + "] " + st.claim().claim() + source);
+                out.add("    [" + status(st) + "] " + st.claim().claim() + source);
             }
         }
         return out;
