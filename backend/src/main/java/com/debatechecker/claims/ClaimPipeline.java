@@ -253,6 +253,7 @@ public final class ClaimPipeline implements AutoCloseable {
                     && (unit.waiting && (fact || unfinished(unit.last().text().trim()))
                             || Character.isLowerCase(text.charAt(0))
                             || fact && (words(text) < SHORT_WORDS || repeats(text, unit.text())
+                                    || unit.anyFact && repeats(unit.text(), text)
                                     || carriesOn(text, unit.text())));
             if (!joins) {
                 if (unit != null && unit.waiting) send(unit);
@@ -281,6 +282,8 @@ public final class ClaimPipeline implements AutoCloseable {
 
     /** Opening a sentence, these lean on the one before. */
     private static final Set<String> JOINS_ON = Set.of("and", "or", "but", "because", "so", "which");
+    private static final Set<String> THAT_THEN = Set.of("is", "was", "will", "would", "can", "could", "has", "had",
+            "means", "meant", "creates", "created", "makes", "made");
     private static final Set<String> POINTS_AT = Set.of("it", "it's", "they", "they're", "he", "he's", "she", "she's",
             "that's", "those", "these");
 
@@ -291,8 +294,12 @@ public final class ClaimPipeline implements AutoCloseable {
      * "but" does if it is about the same thing, which here means sharing one content word.
      */
     private static boolean carriesOn(String sentence, String claimSoFar) {
-        String first = sentence.split("[^A-Za-z']+", 2)[0].toLowerCase();
+        String[] opening = sentence.replaceFirst("(?i)^(?:(?:okay|ok|well|now|look)\\b[, ]*)+", "")
+                .split("[^A-Za-z']+", 3);
+        String first = opening[0].toLowerCase();
         if (POINTS_AT.contains(first)) return true;
+        // "That will save ..." points back; "That year ..." does not.
+        if (first.equals("that") && opening.length > 1 && THAT_THEN.contains(opening[1].toLowerCase())) return true;
         if (!JOINS_ON.contains(first)) return false;
         Set<String> shared = ClaimChecker.contentOf(sentence);
         shared.retainAll(ClaimChecker.contentOf(claimSoFar));

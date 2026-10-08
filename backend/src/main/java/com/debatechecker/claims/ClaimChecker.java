@@ -32,7 +32,7 @@ final class ClaimChecker {
             + " ve ll d m okay yes look know think say said says stated states state claim claims claimed believes"
             + " believe going go get got make made thing things lot way kind while during since although though"
             + " whereas because due including regarding among between thus therefore however specifically per"
-            + " either whether").split(" "));
+            + " either whether include includes included receive receives received receiving").split(" "));
     private static final Set<String> NUMBER_WORDS = Set.of(("zero two three four five six seven eight nine ten eleven"
             + " twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty thirty forty fifty sixty"
             + " seventy eighty ninety hundred thousand million billion trillion half double triple twice percent")
@@ -120,7 +120,9 @@ final class ClaimChecker {
         lost.retainAll(o);
         lost.removeAll(c);
         // "I would like to mention that ..." is manners, not a condition.
-        if (Collections.frequency(o, "would") == 1 && String.join(" ", o).contains("would like")) lost.remove("would");
+        String spoken = String.join(" ", o);
+        if (Collections.frequency(o, "would") == 1 && spoken.contains("would like")) lost.remove("would");
+        if (Collections.frequency(o, "might") == 1 && spoken.matches(".*\\bmight (?:recall|remember)\\b.*")) lost.remove("might");
         if (!lost.isEmpty()) return "drops " + String.join(", ", lost);
 
         Set<String> fresh = new TreeSet<>(written);
@@ -151,7 +153,9 @@ final class ClaimChecker {
         for (String n : names) quoted.add(Pattern.quote(n));
         // Any capitalised name too: the model also writes "Mr. Trump stated that" for "Donald Trump".
         quoted.add("[A-Z][\\w.]*(?: [A-Z][\\w.]*){0,3}");
-        out = out.replaceFirst("^(?:" + String.join("|", quoted) + ") " + SAID + " that ", "");
+        String unwrapped = out.replaceFirst("^(?:" + String.join("|", quoted) + ") " + SAID + " that ", "");
+        if (!unwrapped.equals(out)) unwrapped = unwrapped.replace(", and that ", ", and ").replace(" and that ", " and ");
+        out = unwrapped;
         out = FILLER.matcher(out).replaceFirst("").trim();
         return out.isEmpty() ? out : Character.toUpperCase(out.charAt(0)) + out.substring(1);
     }
@@ -197,7 +201,10 @@ final class ClaimChecker {
         Set<String> out = new HashSet<>();
         for (int i = 0; i < words.size(); i++) {
             if (!NEGATIONS.contains(words.get(i))) continue;
-            for (int j = i + 1; j < Math.min(i + 5, words.size()); j++) {
+            // "Not only do 98% of small businesses ..." denies nothing.
+            if (i + 1 < words.size() && words.get(i + 1).equals("only")) continue;
+            // Three words on, no further: "will not go up, and 95% ..." does not deny the 95%.
+            for (int j = i + 1; j < Math.min(i + 4, words.size()); j++) {
                 String next = words.get(j);
                 if (!STOP.contains(next) && !NEGATIONS.contains(next) && next.length() > 1) {
                     out.add(stem(next));

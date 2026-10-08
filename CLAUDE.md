@@ -416,6 +416,29 @@ first is confirmed, the second could not be verified"). The user changed this on
   these mortgages ..." is one claim, "... 50% of small business income ... That's 16 million jobs
   in America." is one. A wrong one: "We have to stop sending $700 billion a year ... It's wind,
   tide, solar ...". Not run live.
+- **The same debate again with the 40 s check ✅ the best run so far** (2026-10-09, session-e538ba40,
+  15.9 min; panel text and log from the user). 22 of 23 windows judged, in 6.7–19.5 s (still far
+  from the 2–5 s of earlier days; no 503); the one that timed out showed "check unavailable" on
+  the page. 8 confirmed, 1 contradicted, 1 misleading on about 57 cards. Sound: the $52.5 billion
+  plan (Daily Herald), the $300 billion mortgage plan, the rescue package's renegotiation clause,
+  the $455 billion deficit, second-highest business tax rate (TIME's table), Nancy Reagan in
+  hospital. Poor: "misleading" on Obama's middle-class tax cut only because the passage did not
+  mention it; Joe the plumber confirmed from a VOA transcript of 18 October that Exa dates
+  2008-10-01 (after the debate: the month-only leak); sources socialistworker.org and a blogspot
+  page quoting Reuters.
+  - Fixed after it (`ClaimChecker`, `ClaimPipeline`; tests, and fast Replay of the recording: 28
+    of 75 claim messages "as said", the rest rewritten): "not only do 98% ..." is not a negation,
+    and a negation's object is looked for in the next three words only; "receive" / "include"
+    are not new words; "as you might recall" is not a hedge; "X said that A, and that B" loses
+    its second "that" with the wrapper; a fuller sentence takes in the piece before it ("Okay,
+    because we have presided over the largest increase." + the full sentence); "That will save
+    ..." joins the sentence before it.
+  - Left: McCain's voice is named "Senator Obama" automatically every time on this video (the
+    moderator's long "Senator Obama, you propose $60 billion ..." comes before McCain answers);
+    "Senator McCain wants Joe the plumber to spread the wealth around, and that Senator Obama
+    wants to do the same."; "we have allocated $750 billion" -> "Senator McCain allocated ...";
+    "It doesn't, under the Medicare plan, it doesn't help seniors ..." still rejected and then
+    not checked.
 - Next (user, 2026-10-07): Milestone 4 is good enough to build on; what is listed as open above
   is refinement for after the overlay.
 - **Milestone 5, part 1: the panel is written, ⚠ never run in Chrome** (2026-10-07,

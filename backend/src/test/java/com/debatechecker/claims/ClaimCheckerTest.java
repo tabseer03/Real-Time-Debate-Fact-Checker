@@ -40,6 +40,22 @@ class ClaimCheckerTest {
                 "A couple of days ago, Senator Obama was out in Ohio and he had an encounter with a guy who's a plumber.",
                 List.of(), List.of("Senator Obama", "Senator McCain"), "Senator McCain"));
         assertNotNull(problem("If we cut taxes we would be better off.", "We are better off when we cut taxes."));
+        // session-e538ba40: "negation changed on: 98" and "on: 95", "words nobody said: receiv".
+        assertEquals(null, ClaimChecker.problem(
+                "not only do 98% of small businesses make less than $250,000, but I also want to give them additional tax breaks.",
+                "98% of small businesses make less than $250,000, and Obama wants to give them additional tax breaks.",
+                List.of(), NAMES, "Obama"));
+        assertEquals(null, ClaimChecker.problem(
+                "then you will not see your income tax go up, your payroll tax, not one dime. And 95% of working families will get a tax cut.",
+                "Your income tax and payroll tax will not go up, and 95% of working families will get a tax cut.",
+                List.of(), NAMES, "Obama"));
+        assertEquals(null, ClaimChecker.problem(
+                "ExxonMobil and other oil companies, for example, would get an additional $4 billion in tax breaks.",
+                "ExxonMobil and other oil companies would receive an additional $4 billion in tax breaks.",
+                List.of(), NAMES, "Obama"));
+        assertNotNull(problem("I did not raise taxes.", "Governor Romney raised taxes."));
+        assertEquals("The crisis is the worst since the Great Depression, and the rescue plan is a first step.",
+                ClaimChecker.tidy("Obama said that the crisis is the worst since the Great Depression, and that the rescue plan is a first step.", NAMES));
     }
 
     @Test
