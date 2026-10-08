@@ -223,6 +223,7 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
         msg.put("type", "digest");
         msg.put("from", d.fromSec());
         msg.put("to", d.toSec());
+        msg.put("judgeFailed", d.judgeFailed());
         List<Map<String, Object>> speakers = new ArrayList<>();
         for (MinuteDigest.Speaker sp : d.speakers()) {
             List<Map<String, Object>> statements = new ArrayList<>();
@@ -234,7 +235,7 @@ public class AudioStreamHandler extends BinaryWebSocketHandler {
                 s.put("sentence", st.claim().sentence().text());
                 s.put("start", st.claim().sentence().audioStartSec());
                 s.put("verdict", r.verdict().name());
-                s.put("status", MinuteDigest.status(st));
+                s.put("status", MinuteDigest.status(d, st));
                 // "opinion" and "none" are not claims after all: the page sets them apart.
                 s.put("kind", switch (st.kind()) {
                     case FACT -> "fact";

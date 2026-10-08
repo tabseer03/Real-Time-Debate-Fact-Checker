@@ -52,8 +52,10 @@ public final class MinuteDigest implements AutoCloseable {
 
     /**
      * @param speakers one entry per speaker who made a claim, in the order they first spoke
+     * @param judgeFailed the judge was asked and did not answer (busy, or too slow): what it would
+     *                 have read is reported as "check unavailable", not as "could not be verified"
      */
-    public record Digest(double fromSec, double toSec, List<Speaker> speakers) {}
+    public record Digest(double fromSec, double toSec, List<Speaker> speakers, boolean judgeFailed) {}
 
     /** @param name the speaker's name as last known ("Donald Trump"), else the label ("S2") */
     public record Speaker(String label, String name, List<Statement> statements) {}
@@ -218,6 +220,8 @@ public final class MinuteDigest implements AutoCloseable {
             }
         }
         GeminiJudge.Ruling[] rulings = judge(from, to, claims, results);
+        boolean judgeFailed = rulings == null;
+        if (judgeFailed) rulings = new GeminiJudge.Ruling[claims.size()];
         Map<String, List<Statement>> bySpeaker = new LinkedHashMap<>();
         Map<String, String> names = new LinkedHashMap<>();
         for (int i = 0; i < claims.size(); i++) {
@@ -239,13 +243,15 @@ public final class MinuteDigest implements AutoCloseable {
         }
         List<Speaker> speakers = new ArrayList<>();
         bySpeaker.forEach((label, statements) -> speakers.add(new Speaker(label, names.get(label), statements)));
-        return new Digest(from, to, speakers);
+        return new Digest(from, to, speakers, judgeFailed);
     }
 
     /**
      * One request for the whole minute: every claim no fact-checker has rated, with the web
      * passages found for it. A claim without any is sent too: the judge also says whether it is a
-     * statement of fact at all. Whatever goes wrong, those claims just stay "could not be verified".
+     * statement of fact at all.
+     *
+     * @return null if the judge was asked and gave no answer
      */
     private GeminiJudge.Ruling[] judge(double from, double to, List<ClaimPipeline.Claim> claims,
                                        FactChecker.Result[] results) {
@@ -282,8 +288,10 @@ public final class MinuteDigest implements AutoCloseable {
                     (System.nanoTime() - start) / 1_000_000);
         } catch (IOException e) {
             log.warn("[{}] no judge for {}-{} s: {}", sessionId, (int) from, (int) to, e.getMessage());
+            return null;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            return null;
         }
         return rulings;
     }
@@ -307,6 +315,16 @@ public final class MinuteDigest implements AutoCloseable {
         };
     }
 
+    /**
+     * The same, knowing whether the judge answered for this window. Without it nothing was read:
+     * "could not be verified" would say more than is known.
+     */
+    public static String status(Digest d, Statement st) {
+        boolean unread = d.judgeFailed() && st.kind() == GeminiJudge.Kind.FACT
+                && st.result().verdict() == FactChecker.Verdict.UNVERIFIABLE && st.result().rating().isEmpty();
+        return unread ? "check unavailable" : status(st);
+    }
+
     /** The digest as lines of text, for the log and for Replay. */
     public static List<String> describe(Digest d) {
         List<String> out = new ArrayList<>();
@@ -321,7 +339,7 @@ public final class MinuteDigest implements AutoCloseable {
                         : " — " + (unsettled ? "closest found: " : "")
                         + (st.quote().isEmpty() ? "" : "\"" + st.quote() + "\" — ") + r.sources().get(0).title()
                         + (r.rating().isEmpty() ? "" : ", rated \"" + r.rating() + "\"");
-                out.add("    [" + status(st) + "] " + st.claim().claim() + source);
+                out.add("    [" + status(d, st) + "] " + st.claim().claim() + source);
             }
         }
         return out;

@@ -233,6 +233,8 @@
     const c = addClaim({ ...st, speaker: sp.speaker, speakerName: sp.name });
     c.done = true;
     setBadge(c, st.status, COLOURS[st.verdict] || COLOURS.UNVERIFIABLE);
+    // The checking service gave no answer for this stretch: nothing was read, so nothing is known.
+    c.card.title = st.status === 'check unavailable' ? 'The checking service did not answer for this part of the debate.' : '';
     c.found.replaceChildren();
     // What the check read as an opinion, or as no statement at all, is not a claim after all:
     // it stays in its place, greyed and small, with the reason on hover.

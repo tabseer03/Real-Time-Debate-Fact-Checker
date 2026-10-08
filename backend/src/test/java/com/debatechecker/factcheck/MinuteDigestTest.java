@@ -31,6 +31,17 @@ class MinuteDigestTest {
     }
 
     @Test
+    void aWindowTheJudgeDidNotAnswerSaysSo() {
+        String text = "We owe 20 trillion dollars.";
+        ClaimPipeline.Claim c = new ClaimPipeline.Claim(new Sentence("S0", text, 0, 4, 0), text, true, "S0", 0, 1);
+        MinuteDigest.Statement st = new MinuteDigest.Statement(c,
+                new FactChecker.Result(FactChecker.Verdict.UNVERIFIABLE, "", List.of(), false, 0), "", "", GeminiJudge.Kind.FACT);
+        List<MinuteDigest.Speaker> speakers = List.of(new MinuteDigest.Speaker("S0", "S0", List.of(st)));
+        assertEquals("check unavailable", MinuteDigest.status(new MinuteDigest.Digest(0, 40, speakers, true), st));
+        assertEquals("could not be verified", MinuteDigest.status(new MinuteDigest.Digest(0, 40, speakers, false), st));
+    }
+
+    @Test
     void thisYearPointsAtNothing() {
         // session-7a658394: the first was "not checked".
         assertEquals(null, why("This year's deficit will reach an astounding record high of $455 billion."));
