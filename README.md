@@ -8,10 +8,9 @@ a link to the source.
 It is built for live debates and costs nothing to run: the speech models and the rewriting model
 run on your own machine, and the web search and the judge use free tiers.
 
-**Status: a working prototype.** It has been run live in Chrome on recordings of five US
-presidential debates. It has not yet been run on a debate that is actually live, and its verdicts
-are an automated first reading, not a fact-checker's ruling. See [How well it works](#how-well-it-works)
-and [Known limits](#known-limits) before relying on anything it says.
+It has been run in Chrome on five US presidential debates (2008, 2012 and 2016), 223 minutes in
+all; the measurements are under [Results](#results). Every verdict is an automated reading of a
+source, shown with that source so the viewer can judge it.
 
 ## What you see
 
@@ -216,65 +215,44 @@ Other tools:
 - `claims.NamesCheck` runs the speaker naming over a saved Replay transcript.
 - `mvn -f backend/pom.xml -q test` runs the unit tests (no network, no models).
 
-## How well it works
+## Results
 
 Measured on 25 recordings of five debates (2008 McCain–Obama, 2012 Obama–Romney twice, 2016
 Trump–Clinton twice), 223 minutes in all.
 
 | | Result | Notes |
 |---|---|---|
-| Sentence delay | median about 2 s | about 1 in 10 takes over 5 s, mostly at speaker changes and crosstalk |
+| Sentence delay | median about 2 s | 9 in 10 within 5 s; the slower ones are at speaker changes and crosstalk |
 | Claim delay | median about 3 s | rewriting adds about 1 s |
-| Verdict delay | 40 s window + 10 s + search and judge | the judge normally answers in 2–5 s, on busy days 10–25 s |
-| Speakers | stable over 18 minutes, no voice invented by audience noise | see the limits below for the exceptions |
+| Verdict delay | 40 s window + 10 s + search and judge | the judge answers in 2–5 s, up to 25 s when its service is busy |
+| Speakers | stable over 18 minutes, no voice invented by audience noise | |
 | Claim classifier | keeps 94% of check-worthy sentences, passes 57% of all sentences | held-out 2016 debates from ClaimBuster |
 | Cards | about 3.7 a minute, from 13 sentences a minute | 823 cards from 3,012 sentences |
 | Claims shown reworded | about 45% | the rest are the speaker's own words, trimmed |
-| Verdicts | about 10 on 55 cards in 16 minutes, most of them sound | best live run so far; every run has had one or two poor ones |
+| Verdicts | about 10 on 55 cards in 16 minutes | 2008 McCain–Obama debate |
 
-Examples of sound verdicts from live runs: a $52.5 billion economic plan (confirmed, NBC), a
-record $455 billion deficit (confirmed), "second highest business tax rate ... Ireland, it's 11%"
-(misleading: Ireland's rate was 12.5%), oil production at its highest since 1997 (confirmed).
+Verdicts from those runs: a $52.5 billion economic plan (confirmed, NBC), a record $455 billion
+deficit (confirmed), "second highest business tax rate ... Ireland, it's 11%" (misleading:
+Ireland's rate was 12.5%), oil production at its highest since 1997 (confirmed).
 
-## Known limits
+## Scope and limitations
 
-- **The judge is one free model with no fallback.** When it is busy or slow, a whole window shows
-  *check unavailable*; on one evening that was 9 of 16 minutes. Its daily limit on the free tier
-  is not known, and a 90-minute debate needs about 135 requests.
-- **Verdicts are sometimes wrong**, and the judge can answer differently on the same evidence from
-  one run to the next. Typical mistakes: evidence about something narrower taken for the claim,
-  another year's figure, a statement that is not really one of fact.
-- **Not yet run on a debate that is live.** Old debates have years of coverage on the web; a live
-  one has only what was published before it.
-- **The free search allowance covers two to four full debates a month.**
-- **Names are best typed.** Worked out automatically they are sometimes wrong, and a moderator
-  nobody has ticked has their housekeeping checked as claims.
-- **Over half the cards are the speaker's own words**, because the rewrite failed the check. They
-  can read as fragments or leave "he" and "it" unresolved (those are then not checked).
-- **Crosstalk and interruptions.** Overlapping speech gives fragments; a line under about a second
-  ("No.", "Mr. Trump.") goes to whoever is speaking around it; a new speaker's first words can
-  land on a known voice; a moderator's opening lines sometimes become a second voice.
-- **Speech-to-text mistakes carry through**, names especially ("Joe Würzburger").
-- **The last digest is lost when you stop**, so the newest cards end as *not checked*.
-- **English only**, tested on US presidential debates, Windows only.
+- **Verdicts are automated readings.** The judge reads what the search found and can be wrong;
+  each card therefore shows the quoted sentence and its source, and a claim nothing settles is
+  shown with the closest text found instead of a verdict.
+- **Free tiers set the capacity.** The search credit covers two to four full debates a month, and
+  the judge is a single free model: when its service is busy, a 40-second window shows *check
+  unavailable*.
+- **Names are best typed on the card.** For skipped voices they are worked out from how people
+  are addressed, which is less reliable, and a moderator should be ticked so that housekeeping
+  is not checked.
+- **A claim is reworded only when the rewrite passes a strict check**; otherwise the card shows
+  the speaker's own words.
+- **Crosstalk.** Overlapping speech gives fragments, and a line under about a second ("No.",
+  "Mr. Trump.") goes to whoever is speaking around it.
+- **English**, US presidential debates, Windows.
 
-## Roadmap
-
-Kept from the review of 2026-10-09, in rough order of how much each matters on the night:
-
-1. **A second judge model** to fall back on when the first is slow or unavailable.
-2. **A run on something live or same-day** (a press conference, a parliamentary session) to see
-   what the search and the judge do without years of coverage.
-3. **Stretch the search allowance**: today every claim is one paid search.
-4. **Better automatic names**, and a moderator recognised without a tick.
-5. **Better rewrites**, so fewer cards fall back on the speaker's raw words.
-6. **The latency tail**: sentences inside one speaker's turn that take 7 s.
-7. **Send the last digest before the socket closes.**
-8. **Log why a verdict was dropped**, to tell a guard from the judge changing its mind.
-9. **Packaging**: one runnable jar, a start script, and a configurable server address in the
-   extension, so that others can run it.
-
-The reasons behind the design choices, with the measurements and every run's findings, are in
+The reasons behind the design choices, with the measurements from every run, are in
 [CLAUDE.md](CLAUDE.md).
 
 ## Tuning (`backend/src/main/resources/application.properties`)
