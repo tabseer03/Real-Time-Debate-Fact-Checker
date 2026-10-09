@@ -1002,4 +1002,20 @@ segmentation or speaker logic and compare against this.
    a source like BLS / FRED, or web search through self-hosted SearXNG); the claim's date ("this
    year" in a 2012 video). "Checking…" needs no message: a claim is unchecked until the verdict with
    its `id` arrives, and one always does.
-5. **Overlay (written, not yet run in Chrome):** `extension/overlay.js` shows speaker, claim, verdict, sources, timestamp. First: run it live and fix what shows.
+5. **Overlay ✅ run live** (the user's panel pastes, 2026-10-08 and -09): `extension/overlay.js`
+   shows speaker, claim, verdict, sources, timestamp. The greying of opinion cards was never
+   confirmed by eye.
+6. **Kept for later** (user, 2026-10-09: wrap up here; these are the future improvements, also
+   in the README's Roadmap). In order of how much each hurts on the night:
+   1. A second judge model to fall back on (one free Gemini model, daily limit unknown, 9 of 16
+      minutes missing on 2026-10-08).
+   2. A run on something live or same-day: every run so far is an old debate with years of
+      coverage.
+   3. The search allowance: one Exa search per claim, two to four debates a month.
+   4. Automatic names, and moderators recognised without the tick.
+   5. Rewrites: over half the cards are the speaker's own words (the check is not the cause).
+   6. The latency tail inside one speaker's turn (the oldest open item).
+   7. The last digest, lost at stop.
+   8. Logging why a verdict was dropped.
+   9. Packaging for others: one jar, a start script, a configurable server address.
+   Not run live yet: the trimming and the word rules of commit 2eb48f1.
