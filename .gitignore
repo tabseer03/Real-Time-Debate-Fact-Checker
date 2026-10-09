@@ -3,6 +3,8 @@ models/
 eval/voices/
 # per-session audio recordings
 recordings/
+# the backend's log
+logs/
 # saved answers to date-limited web searches (replays)
 cache/
 eval/*.wav

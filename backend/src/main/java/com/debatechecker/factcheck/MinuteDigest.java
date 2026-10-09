@@ -147,6 +147,9 @@ public final class MinuteDigest implements AutoCloseable {
     private static final Set<String> POINTS_BACK = Set.of("it", "that", "this", "they", "he", "she", "those", "these");
     /** Fine with a main clause after a comma ("When I was governor, ..."), a loose end without one. */
     private static final Set<String> SUBORDINATE = Set.of("when", "if", "while", "although", "unless");
+    /** "Of 11 million homes or more so that they can afford ..." is the end of the sentence before. "Of course" is not. */
+    private static final java.util.regex.Pattern MID_SENTENCE = java.util.regex.Pattern.compile(
+            "^of (?!course\\b|the\\b|all\\b|those\\b|these\\b)", java.util.regex.Pattern.CASE_INSENSITIVE);
     private static final double SAME_WORDS = 0.8;
     /** "This year", "this country": the here and now of the debate, not something from the line before. */
     private static final Set<String> HERE_AND_NOW = Set.of("year", "year's", "week", "week's", "month", "month's",
@@ -179,8 +182,11 @@ public final class MinuteDigest implements AutoCloseable {
         if (content.size() < 2) return "too short";
         if (Words.onlyFigures(content)) return "only a figure";
         if (text.endsWith("...") || !text.matches(".*[.!?][\"')]*")) return "unfinished";
-        String first = text.split("[^A-Za-z']+", 2)[0].toLowerCase();
+        // "That's 16 million jobs in America." and "He's been watching some ads ..." open with
+        // "that" and "he" as much as "That is ..." does.
+        String first = text.split("[^A-Za-z']+", 2)[0].toLowerCase().replaceFirst("'(?:s|re|d|ll|ve)$", "");
         if (CONTINUES.contains(first) || SUBORDINATE.contains(first) && !text.contains(",")) return "continues another";
+        if (MID_SENTENCE.matcher(text).find()) return "continues another";
         if (POINTS_BACK.contains(first) && !namesItsThing(first, text)) return "\"" + first + "\" is not said";
         Set<String> words = Set.copyOf(content);
         for (ClaimPipeline.Claim other : minute) {

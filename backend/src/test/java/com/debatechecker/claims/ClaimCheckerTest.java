@@ -117,6 +117,69 @@ class ClaimCheckerTest {
     }
 
     @Test
+    void anotherFormOfAWordThatWasSaidIsNotANewWord() {
+        // Rejected in the replays of 2026-10-09 for "loss", "spent", "increas", "occurr", "independenc".
+        assertEquals(null, ClaimChecker.problem(
+                "Four years ago, we went through the worst financial crisis since the Great Depression. Millions of jobs were lost.",
+                "Four years ago, we went through the worst financial crisis since the Great Depression, with millions of job losses.",
+                List.of(), NAMES, "Obama"));
+        assertEquals(null, ClaimChecker.problem(
+                "We saw him after the first debate spend nearly a week denigrating a former Miss Universe.",
+                "After the first debate, he spent nearly a week denigrating a former Miss Universe.",
+                List.of(), NAMES, "Obama"));
+        assertEquals(null, ClaimChecker.problem(
+                "Electric rates are up, food prices are up, health care costs have gone up by $2,500 a family.",
+                "Electric rates and food prices have increased, and health care costs have gone up by $2,500 a family.",
+                List.of(), NAMES, "Governor Romney"));
+        assertEquals(null, ClaimChecker.problem(
+                "In spite of his policies, all of the increase in natural gas and oil has happened on private land, not on government land.",
+                "The increase in natural gas and oil production has occurred on private land, not on government land.",
+                List.of("We have increased oil production to the highest levels in 16 years."), NAMES, "Governor Romney"));
+        assertEquals(null, ClaimChecker.problem(
+                "One, get us energy independent, North American energy independent. That creates about 4 million jobs.",
+                "Achieving North American energy independence creates approximately 4 million jobs.",
+                List.of(), NAMES, "Governor Romney"));
+        // Still new: a cause nobody gave, and a different word that starts alike.
+        assertNotNull(problem("We're putting a lot of people out of work.", "The investment caused people to lose their jobs."));
+        assertNotNull(problem("He signed the contract in 2015.", "He contradicted himself in 2015."));
+    }
+
+    @Test
+    void aFalseStartIsNotTurnedIntoAChoice() {
+        // session-bc26c6a3: passed, and said that nobody's taxes go up.
+        assertEquals("adds an \"or\" that was not said", ClaimChecker.problem(
+                "If you make more if you make less than a quarter million dollars a year, then you will not see your income tax go up, your capital gains tax go up, your payroll tax, not one dime.",
+                "If you make more than a quarter million dollars a year, or less than a quarter million dollars a year, your income tax, capital gains tax, and payroll tax will not go up.",
+                List.of(), NAMES, "Obama"));
+    }
+
+    @Test
+    void aClaimLeftAsSaidLosesTheWayIn() {
+        // session-bc26c6a3, cards shown as said.
+        assertEquals("The $750 billion rescue package, if it's structured properly, means that ultimately taxpayers get their money back.",
+                ClaimChecker.asSaid("Well, first of all, I think it's important for the American public to understand that the $750 billion rescue package, if it's structured properly, means that ultimately taxpayers get their money back.", NAMES));
+        assertEquals("I have been a strong proponent of pay as you go.",
+                ClaimChecker.asSaid("What I want to emphasize, though is that I have been a strong proponent of pay as you go.", NAMES));
+        assertEquals("Let's help families right away by providing them a tax cut.",
+                ClaimChecker.asSaid("Number two, let's help families right away by providing them a tax cut.", NAMES));
+        assertEquals("The small businesses that we're talking about would receive an increase in their taxes right now.",
+                ClaimChecker.asSaid("And by the way, the small businesses that we're talking about would receive an increase in their taxes right now.", NAMES));
+        assertEquals("In order to give additional tax cuts to Joe the plumber before he could make $250,000.",
+                ClaimChecker.asSaid("In order to give, in order to give additional tax cuts to Joe the plumber before he could make $250,000.", NAMES));
+        assertEquals("If you make less than a quarter million dollars a year, then you will not see your income tax go up.",
+                ClaimChecker.asSaid("If you make more if you make less than a quarter million dollars a year, then you will not see your income tax go up.", NAMES));
+        assertEquals("Warren Buffett could afford to pay a little more in taxes. In order to give additional tax cuts to Joe the plumber.",
+                ClaimChecker.asSaid("Warren Buffett could afford to pay a little more in taxes. In order to give, in order to give additional tax cuts to Joe the plumber.", NAMES));
+        assertEquals("We need to cut taxes, we need to cut spending.",
+                ClaimChecker.asSaid("We need to cut taxes, we need to cut spending.", NAMES));
+        // Not a way in: these are the claim.
+        assertEquals("Second highest tax rate of anywhere in the world.",
+                ClaimChecker.asSaid("Second highest tax rate of anywhere in the world.", NAMES));
+        assertEquals("I think tax policy is a major difference between us.",
+                ClaimChecker.asSaid("I think tax policy is a major difference between us.", NAMES));
+    }
+
+    @Test
     void aPronounTheSpeakerUsedIsLeftAlone() {
         assertEquals(null, problem("And he hasn't been able to identify them.", "He hasn't been able to identify them."));
         assertEquals(null, problem("I don't have a $5 trillion tax cut.", "Governor Romney does not have a $5 trillion tax cut."));

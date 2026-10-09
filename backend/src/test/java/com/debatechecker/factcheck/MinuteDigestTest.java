@@ -50,6 +50,16 @@ class MinuteDigestTest {
     }
 
     @Test
+    void aPieceOfTheSentenceBeforeIsNotChecked() {
+        // session-bc26c6a3: all three were checked.
+        assertEquals("\"that\" is not said", why("That's 16 million jobs in America."));
+        assertEquals("\"he\" is not said", why("He's been watching some ads of Senator McCain's."));
+        assertEquals("continues another", why("Of 11 million homes or more so that they can afford to pay the mortgage, stay in their home."));
+        assertEquals(null, why("Of the 30 members of the OECD, the United States has the second highest rate."));
+        assertEquals(null, why("Of course Senator McCain voted for four of the five Bush budgets."));
+    }
+
+    @Test
     void claimsAreReportedByMinuteAndSpeaker() {
         say("S1", "S1", 5, 9, "We built 40 new hospitals.", true);
         say("S2", "Donald Trump", 20, 24, "Ford is leaving.", true);

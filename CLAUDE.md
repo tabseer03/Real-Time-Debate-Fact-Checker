@@ -439,6 +439,72 @@ first is confirmed, the second could not be verified"). The user changed this on
     wants to do the same."; "we have allocated $750 billion" -> "Senator McCain allocated ...";
     "It doesn't, under the Medicare plan, it doesn't help seniors ..." still rejected and then
     not checked.
+- **Live again with those fixes** (2026-10-09 afternoon, session-bc26c6a3, 12.4 min, same video;
+  panel text only — the log paste was cut, so judge times and the automatic names are not known).
+  38 cards, 6 confirmed / 2 contradicted / 1 misleading, 21 of 38 rewritten. Held live: "not only
+  do 98% ..." rewritten, "$750 billion has been allocated", the joined $455 billion and 35% /
+  Ireland 11% claims. About 20 "could not be verified" cards had no closest sentence under them
+  ($200 billion in corporate tax breaks, $4 billion for oil companies): not known whether the
+  search or the judge came back empty. The backend now also writes `logs/backend.log`
+  (gitignored), so the next run can be read without a paste.
+  - Fixed after it (tests, and fast Replay of the recording without names or web search: 55 claim
+    messages, 21 as said, 32 joins): a rewrite may not add an "or" (the false start "If you make
+    more if you make less than a quarter million" had become "more than ..., or less than ...";
+    with the next sentence joined the rewrite is now right); a sentence opening "Of ..." / "In
+    order to ..." / "So that ..." joins the claim before it, and an "Of ..." claim alone is not
+    checked; "That's" / "He's" / "It's" count as that / he / it in `MinuteDigest.notCheckable`
+    ("That's 16 million jobs in America." is now "not checked").
+  - Left: the joins are whole thoughts but long and as said ("Negotiate with those people in
+    their homes. Of 11 million homes or more ..."; the 95% / Warren Buffett / Joe the plumber
+    claim is three sentences, rewrite rejected for "drops could"); "I want small businesses. And
+    by the way, the small businesses that we're talking about that would receive an increase in
+    their taxes right now." got "contradicted" live — it is McCain's real claim with a stray
+    "that" from speech-to-text and a dangling first piece, no rule for it; "I want Joe the plumber
+    to spread that wealth around. You told them ..." is still one claim; the Buffett half of the
+    95% claim is the only half the judge read.
+- **A joined claim is trimmed** (user, 2026-10-09: parts of a merged claim were junk).
+  `ClaimPipeline.Unit.claimed`: a whole sentence the gate did not pass is left out of the claim
+  ("I want small businesses." before the claim about their taxes; "I want Joe the plumber to
+  spread that wealth around." before "You told them ..."), and so are a few unfinished words at
+  the end ("I haven't made a promise"); a piece of a sentence stays, and so does a sentence the
+  next one leans on ("... in their homes." / "Of 11 million homes ..."). `ClaimChecker.asSaid`,
+  for claims left as said: the way in goes ("Number two,", "First of all, I think it's important
+  for the American public to understand that", "What I want to emphasize, though is that"), and
+  the first try of a phrase said twice ("In order to give, in order to give"; "If you make more
+  if you make less" — not across a comma, "We need to cut taxes, we need to cut spending" is two
+  things). Log line: `trimmed to "..." from: ...`. Tests; fast Replay; **not run live**. Not
+  trimmed: an unrelated sentence the gate rates highly, a weak one that passes the gate, words
+  inside a sentence ("... and that's important to understand.").
+- **All 25 recordings of a minute or more replayed with the system as of 2026-10-09** (fast, no
+  web search, no judge, no typed names; 223 min, five debates). 3,012 sentences, 1,411 pass the
+  gate, **823 cards (3.7 a minute)**, 424 joins, 71 trims, 308 dropped as not a claim (168 too
+  weak alone, 48 courtesy, 29 clause, 23 quoted, 22 own position, 18 said before), 92 of the
+  claims not checked (57 unresolved pronoun). Sentence counts equal the old baselines (41, 262,
+  70): speech and speakers unchanged.
+  - **462 of 823 cards (56%) are the speaker's words, not a rewrite** (2008 debate 46%, the others
+    55–60%). Of some 560 rejected rewrites, 262 are "words nobody said" — mostly one harmless word
+    (result, achieve, independence, approximately, loss, increase, need, occur, according, prior);
+    65 add a number, 39 "drops when", 29 negation, 28 open with a pronoun not said.
+  - **Tried: letting other forms and plain equivalents through** (`ClaimChecker`: `IRREGULAR`
+    lost / loss -> lose, spent -> spend ...; `sameWord`, all of the shorter word but its last
+    letter and at least four; `SAME_THING`, e.g. "increased" when the sentence says "up",
+    "occurred" for "happened", "approximately" for "about", "needs to" for "have to"). Five long
+    recordings, one per debate, replayed again: as said 164 -> 155 of 287 cards (57% -> 54%),
+    "words nobody said" 92 -> 79. **A small gain: the 262 was inflated** by the same opening
+    minutes of the 2012 debate recorded ten times (energy independence, "job losses", the
+    anniversary), and what is left is a long tail of words that do add something (action,
+    statement, agreement, falsely, caused, result). So the rest of the 54% is the model's
+    rewriting, not the check being too strict; more allowed words will not move it much.
+  - Voices (counted, not listened to): four for three people in the 2012 runs that begin at the
+    video's start (the moderator split) and in bc26c6a3; four or five in the 2016 town hall (two
+    moderators and audience questioners, so perhaps right); a stray voice with one or two
+    sentences in four runs; the rest two or three.
+  - Names without the card: the moderator named "Miss Universe" (55f94587), Romney "Governor Ami"
+    (3e3740ab, a misheard address); in most 2012 runs only Romney is named. In 7a658394 and
+    e538ba40 "Senator Obama" went to the right voice — live it had gone to McCain.
+  - 4 rewrites failed on "LLM answer was not complete JSON".
+  - A background batch of Replays is stopped by Claude Code when memory runs low (twice, with the
+    backend, IntelliJ and Ollama up): run them one at a time in the foreground.
 - Next (user, 2026-10-07): Milestone 4 is good enough to build on; what is listed as open above
   is refinement for after the overlay.
 - **Milestone 5, part 1: the panel is written, ⚠ never run in Chrome** (2026-10-07,

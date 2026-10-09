@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
@@ -22,6 +23,18 @@ import java.util.regex.Pattern;
 final class ClaimChecker {
 
     private ClaimChecker() {}
+
+    /**
+     * Past forms no suffix rule finds: "Millions of jobs were lost" and "job losses" are the same
+     * words. Declared first: {@link #stem} needs it for the word lists below.
+     */
+    private static final Map<String, String> IRREGULAR = irregular("lost lose loss lose losses lose spent spend built build paid pay"
+            + " sold sell bought buy told tell took take taken take gave give given give brought bring kept keep"
+            + " grew grow grown grow rose rise risen rise fell fall fallen fall won win ran run began begin begun begin"
+            + " held hold saw see seen see became become wrote write written write chose choose chosen choose"
+            + " spoke speak spoken speak broke break broken break meant mean sent send led lead met meet"
+            + " fought fight taught teach caught catch stood stand understood understand felt feel dealt deal"
+            + " drove drive driven drive");
 
     private static final Set<String> STOP = Set.of(("a an the and or but so of to in on at by for from with as that"
             + " this these those it its is are was were be been being am do does did done has have had having will"
@@ -62,7 +75,56 @@ final class ClaimChecker {
     private static final Pattern WORD = Pattern.compile("[a-z]+|\\d+");
     private static final Pattern FILLER = Pattern.compile(
             "^(?:(?:and|but|so|now|well|look|you know|believe me|honestly|okay)\\b[, ]*)+", Pattern.CASE_INSENSITIVE);
-    private static final String SAID = "(?:stated|states|said|says|claims|claimed|believes|admits|asserts|argues|thinks)";
+    private static final String SAID = "(?:stated|states|said|says|claims|claimed|believes|admits|asserts|argues|thinks"
+            + "|wants to emphasize|emphasizes|emphasized|notes|noted|mentioned)";
+    /**
+     * How a speaker gets to the point: "Number two,", "First of all, I think it's important for the
+     * American public to understand that", "What I want to emphasize, though is that". The LLM
+     * leaves these out; a claim left as said kept them (user, 2026-10-09: trim what adds nothing).
+     */
+    private static final Pattern LEAD_IN = Pattern.compile("^(?:"
+            + "(?:number (?:one|two|three|four|five)|first(?: of all)?|second(?:ly)?|third|last(?:ly)?|finally|in fact"
+            + "|by the way|again)[,:] *"
+            + "|(?:the )?last point (?:i'll|i will|i want to|i'd like to) make[^:,.]{0,40}[:,] *"
+            + "|(?:i think |i believe )?(?:"
+            + "(?:what )?i (?:just |also )?(?:want|wanted|would like|'d like) to (?:say|emphasize|mention|tell you|point out|make clear|stress)"
+            + "(?:,? though)?,?(?: is)?"
+            + "|let me (?:just )?(?:say|tell you|be clear|mention|point out)"
+            + "|the fact (?:of the matter )?is"
+            + "|it(?:'s| is) true"
+            + "|(?:everybody|everyone) (?:knows|understands)(?: at this point)?"
+            + "|it(?:'s| is) important (?:for [^,.]{0,40} )?to (?:understand|know|remember|note)"
+            + ")(?:,? that |, )"
+            + ")", Pattern.CASE_INSENSITIVE);
+    /** "In order to give, in order to give additional tax cuts": the first try at a phrase said twice running. */
+    private static final Pattern FALSE_START = Pattern.compile("\\b(\\w+(?: \\w+){1,4}),? (?=\\1\\b)"
+            // "If you make more if you make less than ...": one word further before starting again.
+            // Not across a comma: "We need to cut taxes, we need to cut spending" says two things.
+            + "|\\b(\\w+(?: \\w+){1,4}) \\w+ (?=\\2\\b)", Pattern.CASE_INSENSITIVE);
+    private static final int MIN_WORDS_LEFT = 4;
+    /**
+     * Words a rewrite may use although nobody said them, when the sentence says the same thing
+     * in other words (matched against its words in lower case). 262 of some 560 rejected rewrites
+     * in the 25 recordings were for a word nobody said, most of them one of these.
+     */
+    private static final Map<Set<String>, Pattern> SAME_THING = Map.of(
+            stems("approximately roughly around"), Pattern.compile("\\b(?:about|around|roughly|approximately|some)\\b"),
+            stems("need needs needed"), Pattern.compile("\\b(?:have to|has to|had to|got to|must|ought to)\\b"),
+            stems("occur occurs occurred occurring"), Pattern.compile("\\bhappen"),
+            stems("increase increases increased increasing rise rises rising"),
+            Pattern.compile("\\b(?:up|higher|rise|rose|risen|grow|grew|grown|growing|more)\\b"),
+            stems("decrease decreases decreased decline declines declined drop drops dropped fall falls"),
+            Pattern.compile("\\b(?:down|lower|fall|fell|fallen|drop|dropped|less|fewer)\\b"),
+            stems("according"), Pattern.compile("\\b(?:said|says|say|found|show|shows|showed|concluded|reported|estimates?)\\b"),
+            stems("achieve achieves achieved achieving reach reaches reached"), Pattern.compile("\\b(?:get|gets|got|getting|reach)\\b"),
+            stems("prior previous previously earlier"), Pattern.compile("\\b(?:ago|before|earlier|previous|last)\\b"));
+
+    private static Map<String, String> irregular(String pairs) {
+        Map<String, String> out = new java.util.HashMap<>();
+        String[] w = pairs.split(" ");
+        for (int i = 0; i + 1 < w.length; i += 2) out.put(w[i], w[i + 1]);
+        return out;
+    }
     /** A rewrite may bring in this many words from the earlier lines: enough to name what "it" was, not a whole fact. */
     private static final int MAX_WORDS_FROM_CONTEXT = 4;
     private static final double MIN_WORDS_KEPT = 0.5;
@@ -86,6 +148,11 @@ final class ClaimChecker {
         if (!c.isEmpty() && POINTS_BACK.contains(c.get(0)) && !o.contains(c.get(0))) {
             return "opens with \"" + c.get(0) + "\", which was not said";
         }
+
+        // "If you make more if you make less than a quarter million" (a false start) came back as
+        // "If you make more than a quarter million dollars a year, or less than ...": a choice
+        // the speaker never offered, out of words that were all said.
+        if (c.contains("or") && !o.contains("or")) return "adds an \"or\" that was not said";
 
         Set<String> said = content(o), written = content(c);
 
@@ -129,6 +196,12 @@ final class ClaimChecker {
         fresh.removeAll(said);
         fresh.removeAll(content(words(String.join(" ", names))));
         fresh.removeAll(HOME);
+        // Another form of a word that was said ("independent" -> "independence"), or the plain
+        // word for what was said ("have gone up" -> "increased"), adds nothing.
+        fresh.removeIf(w -> said.stream().anyMatch(s -> sameWord(w, s)));
+        for (Map.Entry<Set<String>, Pattern> e : SAME_THING.entrySet()) {
+            if (e.getValue().matcher(spoken).find()) fresh.removeAll(e.getKey());
+        }
         Set<String> fromContext = new TreeSet<>(fresh);
         fromContext.retainAll(content(words(String.join(" ", context))));
         fresh.removeAll(fromContext);
@@ -157,6 +230,33 @@ final class ClaimChecker {
         if (!unwrapped.equals(out)) unwrapped = unwrapped.replace(", and that ", ", and ").replace(" and that ", " and ");
         out = unwrapped;
         out = FILLER.matcher(out).replaceFirst("").trim();
+        return out.isEmpty() ? out : Character.toUpperCase(out.charAt(0)) + out.substring(1);
+    }
+
+    /**
+     * The speaker's own words as a claim: {@link #tidy}, and without the way in ("Number two,",
+     * "I would like to mention that") and without a phrase's first try when it is said twice.
+     * Nothing is added or reordered.
+     */
+    static String asSaid(String text, Collection<String> names) {
+        String out = tidy(text, names);
+        while (true) {
+            String shorter = FILLER.matcher(LEAD_IN.matcher(out).replaceFirst("")).replaceFirst("").trim();
+            if (shorter.equals(out) || shorter.split("\\s+").length < MIN_WORDS_LEFT) break;
+            out = shorter;
+        }
+        // What is left takes the capital of the try that went: "... in taxes. In order to give, in order to give ...".
+        StringBuilder kept = new StringBuilder();
+        Matcher m = FALSE_START.matcher(out);
+        int from = 0;
+        while (m.find()) {
+            kept.append(out, from, m.start());
+            from = m.end();
+            if (Character.isUpperCase(out.charAt(m.start())) && from < out.length()) {
+                kept.append(Character.toUpperCase(out.charAt(from++)));
+            }
+        }
+        out = kept.append(out.substring(from)).toString();
         return out.isEmpty() ? out : Character.toUpperCase(out.charAt(0)) + out.substring(1);
     }
 
@@ -215,7 +315,19 @@ final class ClaimChecker {
         return out;
     }
 
+    /**
+     * Two forms of one word: all of the shorter but perhaps its last letter, and four letters at
+     * least ("independenc" / "independent", "marri" / "marry", "invest" / "investment"). Not
+     * "contract" / "contradict".
+     */
+    private static boolean sameWord(String a, String b) {
+        int shorter = Math.min(a.length(), b.length()), same = 0;
+        while (same < shorter && a.charAt(same) == b.charAt(same)) same++;
+        return same >= 4 && same >= shorter - 1;
+    }
+
     private static String stem(String w) {
+        w = IRREGULAR.getOrDefault(w, w);
         if (w.length() > 4 && w.endsWith("ies")) return w.substring(0, w.length() - 3) + "y";
         for (String suffix : new String[] {"ing", "ed", "es", "s"}) {
             if (w.length() > suffix.length() + 2 && w.endsWith(suffix)) {

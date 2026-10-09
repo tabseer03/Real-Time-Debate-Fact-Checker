@@ -133,6 +133,8 @@ public final class ClaimPipeline implements AutoCloseable {
     /** One speaker's sentences that make one claim. */
     private static final class Unit {
         final List<Sentence> sentences = new ArrayList<>();
+        /** For each sentence, whether it passed the gate. */
+        final List<Boolean> facts = new ArrayList<>();
         /** The lines before the first sentence, for the LLM. */
         final List<Sentence> context;
         /** One of the sentences passed the gate by itself. */
@@ -160,9 +162,44 @@ public final class ClaimPipeline implements AutoCloseable {
         }
 
         String text() {
+            return text(sentences);
+        }
+
+        static String text(List<Sentence> sentences) {
             StringBuilder out = new StringBuilder();
             for (Sentence s : sentences) out.append(out.isEmpty() ? "" : " ").append(s.text().trim());
             return out.toString();
+        }
+
+        /**
+         * The sentences that make the claim (user, 2026-10-09: parts of a joined claim were junk).
+         * Left out: a whole sentence the gate did not pass ("I want small businesses." before the
+         * claim about their taxes, "So let me get to that." after one), and a few words at the end
+         * that were never finished ("I haven't made a promise"). A piece of a sentence stays
+         * whatever the gate says of it alone ("record high." between "... will reach" and "$455
+         * billion.").
+         */
+        List<Sentence> claimed() {
+            List<Sentence> out = new ArrayList<>();
+            int n = sentences.size();
+            for (int i = 0; i < n; i++) {
+                String text = sentences.get(i).text().trim();
+                // "I haven't made a promise" / "So let me get to that.": a fresh start, not the rest of it.
+                boolean startsAfresh = text.matches("(?i)(?:so|and|but|now|well|okay)\\b.*");
+                boolean whole = !Character.isLowerCase(text.charAt(0)) && !unfinished(text)
+                        && (i == 0 || startsAfresh || !unfinished(sentences.get(i - 1).text().trim()))
+                        && (i == n - 1 || !Character.isLowerCase(sentences.get(i + 1).text().trim().charAt(0))
+                                && !leansBack(sentences.get(i + 1).text()));
+                if (!whole || facts.get(i)) out.add(sentences.get(i));
+            }
+            if (out.size() > 1) {
+                String end = out.get(out.size() - 1).text().trim();
+                if (unfinished(end) && words(end) < SHORT_WORDS && !Character.isLowerCase(end.charAt(0))
+                        && !unfinished(out.get(out.size() - 2).text().trim())) {
+                    out.remove(out.size() - 1);
+                }
+            }
+            return out.isEmpty() ? List.copyOf(sentences) : out;
         }
     }
     private final ExecutorService llm = Executors.newSingleThreadExecutor(
@@ -265,6 +302,7 @@ public final class ClaimPipeline implements AutoCloseable {
                 units.put(s.speaker(), unit);
             }
             unit.sentences.add(s);
+            unit.facts.add(fact);
             unit.anyFact |= fact;
             unit.anyStrong |= strong;
             if (fact) unit.best = Math.max(unit.best, factual);
@@ -286,6 +324,10 @@ public final class ClaimPipeline implements AutoCloseable {
             "means", "meant", "creates", "created", "makes", "made");
     private static final Set<String> POINTS_AT = Set.of("it", "it's", "they", "they're", "he", "he's", "she", "she's",
             "that's", "those", "these");
+    /** "Of course", "Of the 30 members, ..." and "Of all ..." do open a sentence. */
+    private static final java.util.regex.Pattern MID_SENTENCE = java.util.regex.Pattern.compile(
+            "^\\s*(?:of (?!course\\b|the\\b|all\\b|those\\b|these\\b)|in order to\\b|so that\\b)",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
 
     /**
      * "And he never apologized for the racist lie." after a claim about him, "It's just a
@@ -294,16 +336,29 @@ public final class ClaimPipeline implements AutoCloseable {
      * "but" does if it is about the same thing, which here means sharing one content word.
      */
     private static boolean carriesOn(String sentence, String claimSoFar) {
-        String[] opening = sentence.replaceFirst("(?i)^(?:(?:okay|ok|well|now|look)\\b[, ]*)+", "")
-                .split("[^A-Za-z']+", 3);
-        String first = opening[0].toLowerCase();
-        if (POINTS_AT.contains(first)) return true;
-        // "That will save ..." points back; "That year ..." does not.
-        if (first.equals("that") && opening.length > 1 && THAT_THEN.contains(opening[1].toLowerCase())) return true;
+        if (leansBack(sentence)) return true;
+        String first = opening(sentence)[0].toLowerCase();
         if (!JOINS_ON.contains(first)) return false;
         Set<String> shared = ClaimChecker.contentOf(sentence);
         shared.retainAll(ClaimChecker.contentOf(claimSoFar));
         return !shared.isEmpty();
+    }
+
+    private static String[] opening(String sentence) {
+        return sentence.trim().replaceFirst("(?i)^(?:(?:okay|ok|well|now|look)\\b[, ]*)+", "").split("[^A-Za-z']+", 3);
+    }
+
+    /** The sentence says nothing without the one before it, whatever that one is about. */
+    private static boolean leansBack(String sentence) {
+        String[] opening = opening(sentence);
+        String first = opening[0].toLowerCase();
+        if (POINTS_AT.contains(first)) return true;
+        // "That will save ..." points back; "That year ..." does not.
+        if (first.equals("that") && opening.length > 1 && THAT_THEN.contains(opening[1].toLowerCase())) return true;
+        // The rest of a sentence that was cut in two: "... buy those home loan mortgages." / "Of 11
+        // million homes or more so that they can afford ...", "... pay a little more in taxes." / "In
+        // order to give additional tax cuts to Joe the plumber ...".
+        return MID_SENTENCE.matcher(sentence).find();
     }
 
     /** "What we all saw and heard on Friday", "... and said, Ann,": more is coming. */
@@ -343,10 +398,14 @@ public final class ClaimPipeline implements AutoCloseable {
      */
     private void send(Unit unit) {
         unit.waiting = false;
-        List<Sentence> members = List.copyOf(unit.sentences);
-        Sentence first = members.get(0), last = unit.last();
+        List<Sentence> members = unit.claimed();
+        Sentence first = members.get(0), last = members.get(members.size() - 1);
         Sentence s = members.size() == 1 ? first
-                : new Sentence(first.speaker(), unit.text(), first.audioStartSec(), last.audioEndSec(), last.latencyMs());
+                : new Sentence(first.speaker(), Unit.text(members), first.audioStartSec(), last.audioEndSec(),
+                        unit.last().latencyMs());
+        if (members.size() < unit.sentences.size()) {
+            log.info("[{}] trimmed to \"{}\" from: {}", sessionId, s.text(), unit.text());
+        }
         boolean worth = unit.anyStrong;
         if (!worth && members.size() > 1) {
             // No sentence is enough alone; together they may be ("And housing." + "has begun to rise.").
@@ -395,7 +454,7 @@ public final class ClaimPipeline implements AutoCloseable {
                 boolean rewritten = false;
                 try {
                     // A sentence that quotes someone is left alone: the LLM pins the quoted "I" on the speaker.
-                    claim = opensQuote ? ClaimChecker.tidy(s.text(), known)
+                    claim = opensQuote ? ClaimChecker.asSaid(s.text(), known)
                             : ClaimChecker.tidy(rewriter.rewrite(List.copyOf(people), lines, speaker, s.text()), known);
                     if (claim.isEmpty()) {
                         log.info("[{}] no claim in: {}", sessionId, s.text());
@@ -416,11 +475,11 @@ public final class ClaimPipeline implements AutoCloseable {
                         rewritten = true;
                     } else {
                         log.info("[{}] rewrite rejected ({}): {}", sessionId, problem, claim);
-                        claim = ClaimChecker.tidy(s.text(), known);
+                        claim = ClaimChecker.asSaid(s.text(), known);
                     }
                 } catch (IOException e) {
                     log.warn("[{}] could not rewrite \"{}\": {}", sessionId, s.text(), e.getMessage());
-                    claim = ClaimChecker.tidy(s.text(), known);
+                    claim = ClaimChecker.asSaid(s.text(), known);
                 }
                 long latencyMs = s.latencyMs() + (System.nanoTime() - acceptedNanos) / 1_000_000;
                 if (unit.id == 0) unit.id = ++claimsSoFar;
