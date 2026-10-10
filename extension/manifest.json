@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Debate Fact Checker",
+  "name": "Podium: Debate Fact Checker",
   "version": "0.5.0",
   "description": "Real-time fact-checking for YouTube debates.",
   "permissions": ["tabCapture", "offscreen", "activeTab", "scripting"],

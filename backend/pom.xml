@@ -14,7 +14,7 @@
     <groupId>com.debatechecker</groupId>
     <artifactId>backend</artifactId>
     <version>0.1.0</version>
-    <name>debate-checker-backend</name>
+    <name>podium-backend</name>
 
     <properties>
         <java.version>21</java.version>

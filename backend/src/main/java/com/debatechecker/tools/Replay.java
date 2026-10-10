@@ -63,7 +63,7 @@ public final class Replay {
         FactChecker checker = new FactChecker(
                 new GoogleFactCheck(System.getenv().getOrDefault("GOOGLE_FACTCHECK_KEY", ""), checkTimeout),
                 before != null && exa.enabled() ? exa
-                        : new WikipediaEvidence("DebateFactChecker/0.1 (personal project)", checkTimeout));
+                        : new WikipediaEvidence("Podium/0.1 (personal project)", checkTimeout));
         // Once a minute of audio, as in the live server: each speaker's claims and what the check found.
         com.debatechecker.factcheck.GeminiJudge judge = new com.debatechecker.factcheck.GeminiJudge(
                 System.getenv().getOrDefault("GEMINI_API_KEY", ""), "gemini-3.5-flash-lite",

@@ -37,7 +37,7 @@ public final class FactCheckTry {
         ExaEvidence exa = new ExaEvidence(System.getenv().getOrDefault("EXA_API_KEY", ""), timeout, before);
         try (FactChecker checker = new FactChecker(
                 new GoogleFactCheck(System.getenv().getOrDefault("GOOGLE_FACTCHECK_KEY", ""), timeout),
-                exa.enabled() ? exa : new WikipediaEvidence("DebateFactChecker/0.1 (personal project)", timeout))) {
+                exa.enabled() ? exa : new WikipediaEvidence("Podium/0.1 (personal project)", timeout))) {
             for (String line : claims) {
                 String claim = line.replace("﻿", "").trim();
                 if (claim.isEmpty()) continue;

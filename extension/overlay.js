@@ -59,7 +59,7 @@
     'border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.4);overflow:hidden;');
   const header = el('div', 'display:flex;align-items:center;gap:8px;padding:8px 12px;background:#1f2937;flex-shrink:0;');
   const heading = el('div', 'margin-right:auto;min-width:0;');
-  heading.appendChild(el('div', 'font-weight:600;', 'Debate fact check'));
+  heading.appendChild(el('div', 'font-weight:600;', 'Podium · debate fact check'));
   const state = el('div', 'font-size:11px;color:#9ca3af;', '');
   heading.appendChild(state);
   const fold = el('button', button + 'background:#374151;color:#f9fafb;', '–');

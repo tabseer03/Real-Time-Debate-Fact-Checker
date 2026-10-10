@@ -1,4 +1,9 @@
-# Debate Fact Checker — project notes for Claude Code
+# Podium (Debate Fact Checker) — project notes for Claude Code
+
+The project is called **Podium** (user, 2026-10-10): the README title, the extension's name, the
+panel's heading, the Maven project name and the Wikipedia user agent use it. The folder
+(`debate-checker`), the Java package (`com.debatechecker`), the `debatechecker.*` settings and the
+GitHub repository keep their old names.
 
 Chrome extension + Java backend that fact-checks YouTube debates in real time. Each speaker is
 handled separately; every sentence is classified FACT_CLAIM / OPINION / JUNK, and claims are

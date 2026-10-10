@@ -1,6 +1,6 @@
-# Real-Time Debate Fact Checker
+# Podium: Real-Time Debate Fact Checker
 
-A Chrome extension and a Java backend that listen to a debate on YouTube while it plays, work out
+Podium is a Chrome extension and a Java backend that listen to a debate on YouTube while it plays, work out
 who is speaking, pick out the factual claims, and check them against the web. Results appear in a
 panel on the YouTube page: each claim, who made it, and a verdict with the sentence it rests on and
 a link to the source.
